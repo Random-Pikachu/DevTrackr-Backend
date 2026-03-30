@@ -39,7 +39,8 @@ func main() {
 		access_token VARCHAR(255),
 		is_active BOOLEAN DEFAULT TRUE,
 		last_synced_at TIMESTAMP WITH TIME ZONE,
-		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(user_id, platform)
 	);
 
 	CREATE TABLE IF NOT EXISTS activities (
@@ -76,6 +77,15 @@ func main() {
 		provider_message_id VARCHAR(255),
 		sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_activities_user_date
+    ON activities(user_id, activity_date);
+
+	CREATE INDEX IF NOT EXISTS idx_daily_metrics_user_date
+		ON daily_metrics(user_id, metric_date);
+
+	CREATE INDEX IF NOT EXISTS idx_integrations_user
+		ON integrations(user_id);
 	`
 
 	_, err := db.Exec(schema)
