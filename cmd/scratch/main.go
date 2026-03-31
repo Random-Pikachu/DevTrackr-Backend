@@ -8,11 +8,11 @@ import (
 )
 
 func main() {
-	fmt.Println("Testing Leetcode Collector...")
+	fmt.Println("Testing GitHub Collector...")
 
-	cf := collectors.NewLeetcodeCollector()
+	cf := collectors.NewGitHubCollector("")
 
-	_, err := cf.FetchDailyActivity("Random_Pikachu", time.Now())
+	_, err := cf.FetchDailyActivity("Random-Pikachu", time.Now())
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return

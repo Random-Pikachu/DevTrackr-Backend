@@ -28,10 +28,6 @@ type lcRecentSubmission struct {
 	TitleSlug string `json:"titleSlug"`
 }
 
-type lcDifficultyCount struct {
-    Difficulty string `json:"difficulty"`
-    Count      int    `json:"count"`
-}
 
 type lcSubmissionsResponse struct {
 	Data struct {
