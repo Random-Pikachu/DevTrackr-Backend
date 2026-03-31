@@ -8,9 +8,9 @@ import (
 )
 
 func main() {
-	fmt.Println("Testing Codeforces Collector...")
+	fmt.Println("Testing Leetcode Collector...")
 
-	cf := collectors.NewCodeforcesCollector()
+	cf := collectors.NewLeetcodeCollector()
 
 	_, err := cf.FetchDailyActivity("Random_Pikachu", time.Now())
 	if err != nil {
