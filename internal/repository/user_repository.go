@@ -114,3 +114,86 @@ func (r *UserRepository) UpdatePublicProfile(ctx context.Context, userId string,
 	}
 	return nil
 }
+
+func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.User, error) {
+	query := `
+		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, email_opt_in, profile_public, public_slug, created_at, updated_at
+		FROM users
+		WHERE email_opt_in = true
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var user models.User
+		err := rows.Scan(
+			&user.ID,
+			&user.GithubHandle,
+			&user.LeetcodeHandle,
+			&user.CodeforcesHandle,
+			&user.Email,
+			&user.EmailFrequency,
+			&user.Timezone,
+			&user.EmailOptIn,
+			&user.ProfilePublic,
+			&user.PublicSlug,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
+
+func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error) {
+	query := `
+		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, email_opt_in, profile_public, public_slug, created_at, updated_at
+		FROM users
+	`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var user models.User
+		err := rows.Scan(
+			&user.ID,
+			&user.GithubHandle,
+			&user.LeetcodeHandle,
+			&user.CodeforcesHandle,
+			&user.Email,
+			&user.EmailFrequency,
+			&user.Timezone,
+			&user.EmailOptIn,
+			&user.ProfilePublic,
+			&user.PublicSlug,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}

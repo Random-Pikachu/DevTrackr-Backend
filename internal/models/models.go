@@ -54,16 +54,15 @@ type DailyMetric struct {
 	LcMediumSolved   int       `json:"lc_medium_solved"`
 	LcHardSolved     int       `json:"lc_hard_solved"`
 	CfProblemsSolved int       `json:"cf_problems_solved"`
-	CfRatingDelta    int       `json:"cf_rating_delta"`
 	StreakDays       int       `json:"streak_days"`
 	ComputedAt       time.Time `json:"computed_at,omitempty"`
 }
 
 type EmailLog struct {
-    ID                uuid.UUID      `json:"id"`
-    UserID            uuid.UUID      `json:"user_id"`
-    DigestDate        time.Time      `json:"digest_date"`
-    Status            string         `json:"status"`
-    ProviderMessageID sql.NullString `json:"provider_message_id"`
-    SentAt            time.Time      `json:"sent_at"`
+	ID                uuid.UUID      `json:"id"`
+	UserID            uuid.UUID      `json:"user_id"`
+	DigestDate        time.Time      `json:"digest_date"`
+	Status            string         `json:"status"`
+	ProviderMessageID sql.NullString `json:"provider_message_id"`
+	SentAt            time.Time      `json:"sent_at"`
 }

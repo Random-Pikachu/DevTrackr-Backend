@@ -63,7 +63,6 @@ func main() {
 		lc_medium_solved INT DEFAULT 0,
 		lc_hard_solved INT DEFAULT 0,
 		cf_problems_solved INT DEFAULT 0,
-		cf_rating_delta INT DEFAULT 0,
 		streak_days INT DEFAULT 0,
 		computed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(user_id, metric_date)

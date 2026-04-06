@@ -64,6 +64,66 @@ func (r *ActivityRepository) BulkInsertActivities(ctx context.Context, activitie
 	return tx.Commit()
 }
 
+func (r *ActivityRepository) ReplaceActivitiesForUserAndDate(
+	ctx context.Context,
+	userID string,
+	activityDate time.Time,
+	activities []models.Activity,
+) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	deleteQuery := `
+		DELETE FROM activities
+		WHERE user_id = $1 AND activity_date = $2
+	`
+	if _, err := tx.ExecContext(ctx, deleteQuery, userID, activityDate); err != nil {
+		return err
+	}
+
+	if len(activities) == 0 {
+		return tx.Commit()
+	}
+
+	insertQuery := `
+		INSERT INTO activities (
+			user_id,
+			integration_id,
+			platform,
+			activity_date,
+			activity_type,
+			metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+
+	stmt, err := tx.PrepareContext(ctx, insertQuery)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, activity := range activities {
+		_, err := stmt.ExecContext(
+			ctx,
+			activity.UserID,
+			activity.IntegrationID,
+			activity.Platform,
+			activity.ActivityDate,
+			activity.ActivityType,
+			activity.Metadata,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func (r *ActivityRepository) GetActivitiesByUserAndDate(
 	ctx context.Context,
 	userID string,
