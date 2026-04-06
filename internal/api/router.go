@@ -1,0 +1,43 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
+)
+
+func NewRouter(
+	userRepo *repository.UserRepository,
+	integrationRepo *repository.IntegrationRepository,
+	metricRepo *repository.MetricRepository,
+	aggregator *services.AggregatorService,
+	scheduler *services.SchedulerService,
+) http.Handler {
+	userHandler := NewUserHandler(userRepo, integrationRepo, metricRepo)
+	integrationHandler := NewIntegrationHandler(integrationRepo)
+	jobHandler := NewJobHandler(aggregator, scheduler)
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("POST /users", userHandler.CreateUser)
+	mux.HandleFunc("GET /users", userHandler.ListUsers)
+	mux.HandleFunc("GET /users/by-email", userHandler.GetUserByEmail)
+	mux.HandleFunc("PATCH /users/{id}/email-opt-in", userHandler.UpdateEmailOptIn)
+	mux.HandleFunc("PATCH /users/{id}/profile-public", userHandler.UpdatePublicProfile)
+	mux.HandleFunc("GET /users/{id}/integrations/active", userHandler.GetActiveIntegrations)
+	mux.HandleFunc("GET /users/{id}/metrics", userHandler.GetDailyMetric)
+	mux.HandleFunc("GET /users/{id}/metrics/range", userHandler.GetMetricRange)
+
+	mux.HandleFunc("POST /integrations", integrationHandler.AddIntegration)
+	mux.HandleFunc("DELETE /integrations/{id}", integrationHandler.DeactivateIntegration)
+
+	mux.HandleFunc("POST /jobs/aggregate", jobHandler.RunAggregation)
+	mux.HandleFunc("POST /jobs/nightly", jobHandler.RunNightly)
+
+	return mux
+}
