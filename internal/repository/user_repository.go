@@ -18,8 +18,8 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 
 func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (models.User, error) {
 	query := `
-		INSERT INTO users (email, email_frequency, timezone, email_opt_in, profile_public)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (email, email_frequency, timezone, digest_time, email_opt_in, profile_public)
+		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), '20:00'), $5, $6)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -29,8 +29,9 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 		user.Email,          //$1
 		user.EmailFrequency, //$2
 		user.Timezone,       //$3
-		user.EmailOptIn,     //$4
-		user.ProfilePublic,  //$5
+		user.DigestTime,     //$4
+		user.EmailOptIn,     //$5
+		user.ProfilePublic,  //$6
 	).Scan(
 		&user.ID,        // Returning id
 		&user.CreatedAt, //Returning created_at
@@ -46,7 +47,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 
 func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
 	query := `
-        SELECT id, email, email_frequency, timezone, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug
+        SELECT id, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug
         FROM users 
         WHERE email = $1
     `
@@ -56,6 +57,7 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (mode
 		&user.Email,
 		&user.EmailFrequency,
 		&user.Timezone,
+		&user.DigestTime,
 		&user.EmailOptIn,
 		&user.ProfilePublic,
 		&user.GithubHandle,
@@ -72,6 +74,26 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (mode
 
 	return user, nil
 
+}
+
+func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, digestTime string) error {
+	query := `
+		UPDATE users
+		SET digest_time = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	result, err := r.db.ExecContext(ctx, query, digestTime, userId)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("User not found")
+	}
+	return nil
 }
 
 func (r *UserRepository) UpdateEmailOptIn(ctx context.Context, userId string, emailOptIn bool) error {
@@ -117,7 +139,7 @@ func (r *UserRepository) UpdatePublicProfile(ctx context.Context, userId string,
 
 func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.User, error) {
 	query := `
-		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, email_opt_in, profile_public, public_slug, created_at, updated_at
+		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
 		FROM users
 		WHERE email_opt_in = true
 	`
@@ -139,6 +161,7 @@ func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.U
 			&user.Email,
 			&user.EmailFrequency,
 			&user.Timezone,
+			&user.DigestTime,
 			&user.EmailOptIn,
 			&user.ProfilePublic,
 			&user.PublicSlug,
@@ -159,7 +182,7 @@ func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.U
 
 func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error) {
 	query := `
-		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, email_opt_in, profile_public, public_slug, created_at, updated_at
+		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
 		FROM users
 	`
 
@@ -180,6 +203,7 @@ func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error)
 			&user.Email,
 			&user.EmailFrequency,
 			&user.Timezone,
+			&user.DigestTime,
 			&user.EmailOptIn,
 			&user.ProfilePublic,
 			&user.PublicSlug,

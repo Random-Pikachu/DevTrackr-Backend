@@ -57,14 +57,17 @@ func main() {
 	defer stop()
 
 	if os.Getenv("SCHEDULER_ENABLED") == "true" {
-		runHour := envInt("SCHEDULER_RUN_HOUR_UTC", 20)
-		runMinute := envInt("SCHEDULER_RUN_MINUTE_UTC", 0)
+		tickMinutes := envInt("SCHEDULER_TICK_MINUTES", 1)
+		if tickMinutes <= 0 {
+			tickMinutes = 1
+		}
+		tickInterval := time.Duration(tickMinutes) * time.Minute
 		go func() {
-			if err := schedulerService.Start(ctx, runHour, runMinute); err != nil && !errors.Is(err, context.Canceled) {
+			if err := schedulerService.Start(ctx, tickInterval); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("scheduler stopped with error: %v", err)
 			}
 		}()
-		log.Printf("scheduler enabled at %02d:%02d UTC", runHour, runMinute)
+		log.Printf("scheduler enabled with %s tick interval", tickInterval)
 	}
 
 	go func() {

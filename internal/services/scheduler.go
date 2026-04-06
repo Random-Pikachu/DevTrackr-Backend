@@ -37,6 +37,7 @@ type SchedulerService struct {
 
 type AggregatorRunner interface {
 	RunDailyAggregation(ctx context.Context, date time.Time) error
+	AggregateUserForDate(ctx context.Context, user models.User, date time.Time) (models.DailyMetric, error)
 }
 
 func NewSchedulerService(
@@ -84,6 +85,49 @@ func (s *SchedulerService) RunNightlyJob(ctx context.Context, digestDate time.Ti
 	return errors.Join(aggregateErr, combinedErr)
 }
 
+func (s *SchedulerService) RunDueDigests(ctx context.Context, now time.Time) error {
+	users, err := s.userRepo.GetDigestEligibleUsers(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list digest users: %w", err)
+	}
+
+	var combinedErr error
+	for _, user := range users {
+		due, digestDate, err := isUserDueAt(user, now)
+		if err != nil {
+			s.logger.Printf("skipping user %s due to invalid schedule config: %v", user.ID, err)
+			continue
+		}
+		if !due {
+			continue
+		}
+
+		err = s.sendFreshDigestToUser(ctx, user, digestDate)
+		if err != nil {
+			s.logger.Printf("failed due-digest delivery for %s (%s): %v", user.ID, user.Email, err)
+			combinedErr = errors.Join(combinedErr, err)
+		}
+	}
+
+	return combinedErr
+}
+
+func (s *SchedulerService) sendFreshDigestToUser(ctx context.Context, user models.User, digestDate time.Time) error {
+	sent, err := s.emailRepo.HasDigestBeenSent(ctx, user.ID.String(), digestDate)
+	if err != nil {
+		return err
+	}
+	if sent {
+		return nil
+	}
+
+	if _, err := s.aggregator.AggregateUserForDate(ctx, user, digestDate); err != nil {
+		return err
+	}
+
+	return s.sendDigestToUser(ctx, user, digestDate)
+}
+
 func (s *SchedulerService) sendDigestToUser(ctx context.Context, user models.User, digestDate time.Time) error {
 	sent, err := s.emailRepo.HasDigestBeenSent(ctx, user.ID.String(), digestDate)
 	if err != nil {
@@ -125,35 +169,24 @@ func (s *SchedulerService) sendDigestToUser(ctx context.Context, user models.Use
 	return logErr
 }
 
-func (s *SchedulerService) Start(ctx context.Context, runHourUTC int, runMinuteUTC int) error {
-	if runHourUTC < 0 || runHourUTC > 23 || runMinuteUTC < 0 || runMinuteUTC > 59 {
-		return fmt.Errorf("invalid run time: hour=%d minute=%d", runHourUTC, runMinuteUTC)
+func (s *SchedulerService) Start(ctx context.Context, tickInterval time.Duration) error {
+	if tickInterval <= 0 {
+		return fmt.Errorf("invalid tick interval: %s", tickInterval)
 	}
 
-	for {
-		next := nextRunAtUTC(time.Now().UTC(), runHourUTC, runMinuteUTC)
-		wait := time.Until(next)
-		timer := time.NewTimer(wait)
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
 
+	for {
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return ctx.Err()
-		case <-timer.C:
-			digestDate := next.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour)
-			if err := s.RunNightlyJob(ctx, digestDate); err != nil {
-				s.logger.Printf("nightly job failed for %s: %v", digestDate.Format("2006-01-02"), err)
+		case now := <-ticker.C:
+			if err := s.RunDueDigests(ctx, now.UTC()); err != nil {
+				s.logger.Printf("due-digests tick failed at %s: %v", now.UTC().Format(time.RFC3339), err)
 			}
 		}
 	}
-}
-
-func nextRunAtUTC(now time.Time, hour int, minute int) time.Time {
-	next := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, time.UTC)
-	if !next.After(now) {
-		next = next.Add(24 * time.Hour)
-	}
-	return next
 }
 
 func isNotFoundError(err error) bool {
@@ -164,4 +197,33 @@ func isNotFoundError(err error) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+func isUserDueAt(user models.User, nowUTC time.Time) (bool, time.Time, error) {
+	timezone := user.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("invalid timezone %q", timezone)
+	}
+
+	digestTime := user.DigestTime
+	if digestTime == "" {
+		digestTime = "20:00"
+	}
+	digestClock, err := time.Parse("15:04", digestTime)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("invalid digest time %q", digestTime)
+	}
+
+	localNow := nowUTC.In(location)
+	if localNow.Hour() != digestClock.Hour() || localNow.Minute() != digestClock.Minute() {
+		return false, time.Time{}, nil
+	}
+
+	digestDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
+	return true, digestDate, nil
 }

@@ -31,6 +31,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Email          string `json:"email"`
 		EmailFrequency string `json:"email_frequency"`
 		Timezone       string `json:"timezone"`
+		DigestTime     string `json:"digest_time"`
 		EmailOptIn     bool   `json:"email_opt_in"`
 		ProfilePublic  bool   `json:"profile_public"`
 	}
@@ -42,11 +43,21 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email is required")
 		return
 	}
+	if req.Timezone == "" {
+		req.Timezone = "UTC"
+	}
+	if req.DigestTime == "" {
+		req.DigestTime = "20:00"
+	} else if _, err := time.Parse("15:04", req.DigestTime); err != nil {
+		writeError(w, http.StatusBadRequest, "digest_time must be HH:MM (24-hour format)")
+		return
+	}
 
 	user, err := h.userRepo.CreateUser(r.Context(), models.User{
 		Email:          req.Email,
 		EmailFrequency: req.EmailFrequency,
 		Timezone:       req.Timezone,
+		DigestTime:     req.DigestTime,
 		EmailOptIn:     req.EmailOptIn,
 		ProfilePublic:  req.ProfilePublic,
 	})
@@ -120,6 +131,33 @@ func (h *UserHandler) UpdatePublicProfile(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.userRepo.UpdatePublicProfile(r.Context(), userID, req.ProfilePublic); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (h *UserHandler) UpdateDigestTime(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	var req struct {
+		DigestTime string `json:"digest_time"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if _, err := time.Parse("15:04", req.DigestTime); err != nil {
+		writeError(w, http.StatusBadRequest, "digest_time must be HH:MM (24-hour format)")
+		return
+	}
+
+	if err := h.userRepo.UpdateDigestTime(r.Context(), userID, req.DigestTime); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}

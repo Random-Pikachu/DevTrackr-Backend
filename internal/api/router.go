@@ -29,6 +29,7 @@ func NewRouter(
 	mux.HandleFunc("GET /users/by-email", userHandler.GetUserByEmail)
 	mux.HandleFunc("PATCH /users/{id}/email-opt-in", userHandler.UpdateEmailOptIn)
 	mux.HandleFunc("PATCH /users/{id}/profile-public", userHandler.UpdatePublicProfile)
+	mux.HandleFunc("PATCH /users/{id}/digest-time", userHandler.UpdateDigestTime)
 	mux.HandleFunc("GET /users/{id}/integrations/active", userHandler.GetActiveIntegrations)
 	mux.HandleFunc("GET /users/{id}/metrics", userHandler.GetDailyMetric)
 	mux.HandleFunc("GET /users/{id}/metrics/range", userHandler.GetMetricRange)

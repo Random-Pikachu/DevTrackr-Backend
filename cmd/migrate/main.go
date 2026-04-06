@@ -24,12 +24,16 @@ func main() {
 		email VARCHAR(255) UNIQUE NOT NULL,
 		email_frequency VARCHAR(50) DEFAULT 'daily',
 		timezone VARCHAR(100) DEFAULT 'UTC',
+		digest_time VARCHAR(5) DEFAULT '20:00',
 		email_opt_in BOOLEAN DEFAULT TRUE,
 		profile_public BOOLEAN DEFAULT FALSE,
 		public_slug VARCHAR(255) UNIQUE,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);
+
+	ALTER TABLE users
+	ADD COLUMN IF NOT EXISTS digest_time VARCHAR(5) DEFAULT '20:00';
 
 	CREATE TABLE IF NOT EXISTS integrations (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

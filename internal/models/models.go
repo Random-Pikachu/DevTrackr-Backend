@@ -16,6 +16,7 @@ type User struct {
 	Email            string         `json:"email"`
 	EmailFrequency   string         `json:"email_frequency,omitempty"`
 	Timezone         string         `json:"timezone,omitempty"`
+	DigestTime       string         `json:"digest_time,omitempty"`
 	EmailOptIn       bool           `json:"email_opt_in,omitempty"`
 	ProfilePublic    bool           `json:"profile_public,omitempty"`
 	PublicSlug       sql.NullString `json:"public_slug,omitempty"`
