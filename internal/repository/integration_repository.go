@@ -7,7 +7,6 @@ import (
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
 )
 
-
 type IntegrationRepository struct {
 	db *sql.DB
 }
@@ -25,23 +24,22 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 	`
 
 	err := r.db.QueryRowContext(
-		ctx, 
-		query, 
-		integration.UserID, 
-		integration.Platform, 
-		integration.Handle, 
-		integration.AccessToken, 
+		ctx,
+		query,
+		integration.UserID,
+		integration.Platform,
+		integration.Handle,
+		integration.AccessToken,
 		integration.IsActive,
 	).Scan(
-			&integration.ID, 
-			&integration.CreatedAt,
+		&integration.ID,
+		&integration.CreatedAt,
 	)
 	return integration, err
 }
 
-
-func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userID string) ([]models.Integration, error){
-	query :=`
+func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userID string) ([]models.Integration, error) {
+	query := `
 		SELECT id, user_id, platform, handle, access_token, is_active, last_synced_at, created_at
 		FROM integrations
 		WHERE user_id = $1 AND is_active = true
@@ -75,7 +73,7 @@ func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userI
 
 		integrations = append(integrations, integration)
 	}
-	
+
 	return integrations, nil
 }
 

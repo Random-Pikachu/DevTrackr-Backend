@@ -89,12 +89,11 @@ func (r *UserRepository) UpdateEmailOptIn(ctx context.Context, userId string, em
 		return err
 	}
 
-	if (rowsAffected == 0) {
+	if rowsAffected == 0 {
 		return errors.New("User not found")
 	}
 	return nil
 }
-
 
 func (r *UserRepository) UpdatePublicProfile(ctx context.Context, userId string, profilePublic bool) error {
 	query := `
