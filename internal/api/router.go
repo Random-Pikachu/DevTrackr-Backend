@@ -11,11 +11,14 @@ func NewRouter(
 	userRepo *repository.UserRepository,
 	integrationRepo *repository.IntegrationRepository,
 	metricRepo *repository.MetricRepository,
+	authService *services.AuthService,
+	frontendOAuthCallbackURL string,
 	aggregator *services.AggregatorService,
 	scheduler *services.SchedulerService,
 ) http.Handler {
 	userHandler := NewUserHandler(userRepo, integrationRepo, metricRepo)
 	integrationHandler := NewIntegrationHandler(integrationRepo)
+	authHandler := NewAuthHandler(authService, frontendOAuthCallbackURL)
 	jobHandler := NewJobHandler(aggregator, scheduler)
 
 	mux := http.NewServeMux()
@@ -23,7 +26,11 @@ func NewRouter(
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-
+	mux.HandleFunc("GET /auth/github/login", authHandler.GitHubLogin)
+	mux.HandleFunc("GET /auth/github/callback", authHandler.GitHubCallback)
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"message": "Welcome to DevTrackr API!"})
+	})
 	mux.HandleFunc("POST /users", userHandler.CreateUser)
 	mux.HandleFunc("GET /users", userHandler.ListUsers)
 	mux.HandleFunc("GET /users/by-email", userHandler.GetUserByEmail)

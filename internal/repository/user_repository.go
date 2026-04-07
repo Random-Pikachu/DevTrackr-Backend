@@ -96,6 +96,26 @@ func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, di
 	return nil
 }
 
+func (r *UserRepository) UpdateGithubHandle(ctx context.Context, userId string, githubHandle string) error {
+	query := `
+		UPDATE users
+		SET github_handle = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	result, err := r.db.ExecContext(ctx, query, githubHandle, userId)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("User not found")
+	}
+	return nil
+}
+
 func (r *UserRepository) UpdateEmailOptIn(ctx context.Context, userId string, emailOptIn bool) error {
 	query := `
 		UPDATE users

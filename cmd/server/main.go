@@ -30,6 +30,13 @@ func main() {
 	aggregatorService := services.NewAggregatorService(userRepo, integrationRepo, activityRepo, metricRepo, log.Default())
 	digestService := services.NewDigestService()
 	emailService := services.NewEmailServiceFromEnv()
+	authService := services.NewAuthService(
+		userRepo,
+		os.Getenv("GITHUB_CLIENT_ID"),
+		os.Getenv("GITHUB_CLIENT_SECRET"),
+		os.Getenv("GITHUB_REDIRECT_URL"),
+		os.Getenv("AUTH_TOKEN_SECRET"),
+	)
 	schedulerService := services.NewSchedulerService(
 		aggregatorService,
 		digestService,
@@ -40,7 +47,17 @@ func main() {
 		log.Default(),
 	)
 
-	router := api.NewRouter(userRepo, integrationRepo, metricRepo, aggregatorService, schedulerService)
+	frontendOAuthCallbackURL := os.Getenv("FRONTEND_OAUTH_CALLBACK_URL")
+	router := api.NewRouter(
+		userRepo,
+		integrationRepo,
+		metricRepo,
+		authService,
+		frontendOAuthCallbackURL,
+		aggregatorService,
+		schedulerService,
+	)
+	handler := api.WithCORS(router, []string{"http://localhost:5173"})
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -49,7 +66,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + port,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
