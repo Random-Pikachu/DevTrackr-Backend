@@ -10,6 +10,8 @@ services:
       - ..:/workspace:cached
     env_file:
       - ../.env
+    ports:
+      - "5367:5367"
     command: sleep infinity
     depends_on:
       db:

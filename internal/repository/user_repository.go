@@ -18,20 +18,21 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 
 func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (models.User, error) {
 	query := `
-		INSERT INTO users (email, email_frequency, timezone, digest_time, email_opt_in, profile_public)
-		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), '20:00'), $5, $6)
+		INSERT INTO users (username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public)
+		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, ''), '20:00'), $6, $7)
 		RETURNING id, created_at, updated_at
 	`
 
 	err := r.db.QueryRowContext(
 		ctx,
 		query,
-		user.Email,          //$1
-		user.EmailFrequency, //$2
-		user.Timezone,       //$3
-		user.DigestTime,     //$4
-		user.EmailOptIn,     //$5
-		user.ProfilePublic,  //$6
+		user.Username,       //$1
+		user.Email,          //$2
+		user.EmailFrequency, //$3
+		user.Timezone,       //$4
+		user.DigestTime,     //$5
+		user.EmailOptIn,     //$6
+		user.ProfilePublic,  //$7
 	).Scan(
 		&user.ID,        // Returning id
 		&user.CreatedAt, //Returning created_at
@@ -47,13 +48,14 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 
 func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (models.User, error) {
 	query := `
-        SELECT id, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug
+        SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug
         FROM users 
         WHERE email = $1
     `
 	var user models.User
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
+		&user.Username,
 		&user.Email,
 		&user.EmailFrequency,
 		&user.Timezone,
@@ -76,6 +78,37 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (mode
 
 }
 
+func (r *UserRepository) GetUserByUsername(ctx context.Context, username string) (models.User, error) {
+	query := `
+        SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug
+        FROM users 
+        WHERE username = $1
+    `
+	var user models.User
+	err := r.db.QueryRowContext(ctx, query, username).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.EmailFrequency,
+		&user.Timezone,
+		&user.DigestTime,
+		&user.EmailOptIn,
+		&user.ProfilePublic,
+		&user.GithubHandle,
+		&user.LeetcodeHandle,
+		&user.CodeforcesHandle,
+		&user.PublicSlug,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.User{}, errors.New("user not found")
+		}
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
 func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, digestTime string) error {
 	query := `
 		UPDATE users
@@ -83,6 +116,26 @@ func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, di
 		WHERE id = $2
 	`
 	result, err := r.db.ExecContext(ctx, query, digestTime, userId)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("User not found")
+	}
+	return nil
+}
+
+func (r *UserRepository) UpdateUsername(ctx context.Context, userId string, username string) error {
+	query := `
+		UPDATE users
+		SET username = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	result, err := r.db.ExecContext(ctx, query, username, userId)
 	if err != nil {
 		return err
 	}
@@ -159,7 +212,7 @@ func (r *UserRepository) UpdatePublicProfile(ctx context.Context, userId string,
 
 func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.User, error) {
 	query := `
-		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
+		SELECT id, username, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
 		FROM users
 		WHERE email_opt_in = true
 	`
@@ -175,6 +228,7 @@ func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.U
 		var user models.User
 		err := rows.Scan(
 			&user.ID,
+			&user.Username,
 			&user.GithubHandle,
 			&user.LeetcodeHandle,
 			&user.CodeforcesHandle,
@@ -202,7 +256,7 @@ func (r *UserRepository) GetDigestEligibleUsers(ctx context.Context) ([]models.U
 
 func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error) {
 	query := `
-		SELECT id, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
+		SELECT id, username, github_handle, leetcode_handle, codeforces_handle, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, public_slug, created_at, updated_at
 		FROM users
 	`
 
@@ -217,6 +271,7 @@ func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error)
 		var user models.User
 		err := rows.Scan(
 			&user.ID,
+			&user.Username,
 			&user.GithubHandle,
 			&user.LeetcodeHandle,
 			&user.CodeforcesHandle,

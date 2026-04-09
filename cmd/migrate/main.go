@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/config"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/database"
 )
 
 func main() {
+	if err := config.LoadLocalEnv(".env", "backend/.env"); err != nil {
+		log.Fatalf("failed to load local env: %v", err)
+	}
+
 	database.InitDB()
 	db := database.DB
 
@@ -18,6 +23,7 @@ func main() {
 
 	CREATE TABLE IF NOT EXISTS users (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+		username VARCHAR(255) UNIQUE,
 		github_handle VARCHAR(255),
 		leetcode_handle VARCHAR(255),
 		codeforces_handle VARCHAR(255),
@@ -34,6 +40,12 @@ func main() {
 
 	ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS digest_time VARCHAR(5) DEFAULT '20:00';
+
+	ALTER TABLE users
+	ADD COLUMN IF NOT EXISTS username VARCHAR(255);
+
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique
+		ON users(username);
 
 	CREATE TABLE IF NOT EXISTS integrations (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

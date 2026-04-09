@@ -5,19 +5,26 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/api"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/config"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/database"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
 func main() {
+	if err := config.LoadLocalEnv(".env", "backend/.env"); err != nil {
+		log.Fatalf("failed to load local env: %v", err)
+	}
+
 	database.InitDB()
 	db := database.DB
 
@@ -57,7 +64,8 @@ func main() {
 		aggregatorService,
 		schedulerService,
 	)
-	handler := api.WithCORS(router, []string{"http://localhost:5173"})
+	allowedOrigins := getAllowedOrigins()
+	handler := api.WithCORS(router, allowedOrigins)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -97,6 +105,7 @@ func main() {
 	}()
 
 	log.Printf("server listening on :%s", port)
+	log.Printf("cors allowed origins: %s", strings.Join(allowedOrigins, ", "))
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("server failed: %v", err)
 	}
@@ -112,4 +121,39 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func getAllowedOrigins() []string {
+	origins := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	addOrigin := func(origin string) {
+		origin = strings.TrimSuffix(strings.TrimSpace(origin), "/")
+		if origin == "" {
+			return
+		}
+		if _, ok := seen[origin]; ok {
+			return
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+
+	addOrigin("http://localhost:5173")
+	addOrigin("http://127.0.0.1:5173")
+	addOrigin(originFromURL(os.Getenv("FRONTEND_OAUTH_CALLBACK_URL")))
+
+	for _, part := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		addOrigin(part)
+	}
+
+	return origins
+}
+
+func originFromURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return ""
+	}
+
+	return parsed.Scheme + "://" + parsed.Host
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
@@ -28,6 +29,7 @@ func NewUserHandler(
 
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Username       string `json:"username"`
 		Email          string `json:"email"`
 		EmailFrequency string `json:"email_frequency"`
 		Timezone       string `json:"timezone"`
@@ -54,6 +56,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.userRepo.CreateUser(r.Context(), models.User{
+		Username:       toNullString(req.Username),
 		Email:          req.Email,
 		EmailFrequency: req.EmailFrequency,
 		Timezone:       req.Timezone,
@@ -86,6 +89,21 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.userRepo.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
+	username := r.URL.Query().Get("username")
+	if username == "" {
+		writeError(w, http.StatusBadRequest, "username query parameter is required")
+		return
+	}
+
+	user, err := h.userRepo.GetUserByUsername(r.Context(), username)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -131,6 +149,32 @@ func (h *UserHandler) UpdatePublicProfile(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.userRepo.UpdatePublicProfile(r.Context(), userID, req.ProfilePublic); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (h *UserHandler) UpdateUsername(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Username == "" {
+		writeError(w, http.StatusBadRequest, "username is required")
+		return
+	}
+
+	if err := h.userRepo.UpdateUsername(r.Context(), userID, req.Username); err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
@@ -227,4 +271,89 @@ func (h *UserHandler) GetMetricRange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+func (h *UserHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	startParam := r.URL.Query().Get("start")
+	endParam := r.URL.Query().Get("end")
+	if userID == "" || startParam == "" || endParam == "" {
+		writeError(w, http.StatusBadRequest, "user id, start and end are required")
+		return
+	}
+
+	startDate, err := time.Parse("2006-01-02", startParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "start must be YYYY-MM-DD")
+		return
+	}
+	endDate, err := time.Parse("2006-01-02", endParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "end must be YYYY-MM-DD")
+		return
+	}
+	startDate = startDate.UTC().Truncate(24 * time.Hour)
+	endDate = endDate.UTC().Truncate(24 * time.Hour)
+	if endDate.Before(startDate) {
+		writeError(w, http.StatusBadRequest, "end must be greater than or equal to start")
+		return
+	}
+
+	metrics, err := h.metricRepo.ListDailyMetricsByRange(r.Context(), userID, startDate, endDate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	byDate := make(map[string]models.DailyMetric, len(metrics))
+	for _, metric := range metrics {
+		byDate[metric.MetricDate.UTC().Format("2006-01-02")] = metric
+	}
+
+	type heatmapDay struct {
+		Date               string `json:"date"`
+		TotalContributions int    `json:"total_contributions"`
+		GithubCommits      int    `json:"github_commits"`
+		LcEasySolved       int    `json:"lc_easy_solved"`
+		LcMediumSolved     int    `json:"lc_medium_solved"`
+		LcHardSolved       int    `json:"lc_hard_solved"`
+		CfProblemsSolved   int    `json:"cf_problems_solved"`
+	}
+
+	series := make([]heatmapDay, 0)
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		metric, ok := byDate[key]
+		if !ok {
+			series = append(series, heatmapDay{Date: key})
+			continue
+		}
+
+		total := metric.GithubCommits +
+			metric.LcEasySolved +
+			metric.LcMediumSolved +
+			metric.LcHardSolved +
+			metric.CfProblemsSolved
+
+		series = append(series, heatmapDay{
+			Date:               key,
+			TotalContributions: total,
+			GithubCommits:      metric.GithubCommits,
+			LcEasySolved:       metric.LcEasySolved,
+			LcMediumSolved:     metric.LcMediumSolved,
+			LcHardSolved:       metric.LcHardSolved,
+			CfProblemsSolved:   metric.CfProblemsSolved,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user_id": userID,
+		"start":   startDate.Format("2006-01-02"),
+		"end":     endDate.Format("2006-01-02"),
+		"days":    series,
+	})
+}
+
+func toNullString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
 }

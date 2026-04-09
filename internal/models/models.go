@@ -10,6 +10,7 @@ import (
 
 type User struct {
 	ID               uuid.UUID      `json:"id"`
+	Username         sql.NullString `json:"username,omitempty"`
 	GithubHandle     sql.NullString `json:"github_handle,omitempty"`
 	LeetcodeHandle   sql.NullString `json:"leetcode_handle,omitempty"`
 	CodeforcesHandle sql.NullString `json:"codeforces_handle,omitempty"`
