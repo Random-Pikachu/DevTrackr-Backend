@@ -38,6 +38,36 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 	return integration, err
 }
 
+func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error) {
+	query := `
+		INSERT INTO integrations (user_id, platform, handle, access_token, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, platform)
+		DO UPDATE SET
+			handle = EXCLUDED.handle,
+			access_token = EXCLUDED.access_token,
+			is_active = EXCLUDED.is_active,
+			last_synced_at = NULL
+		RETURNING id, created_at, last_synced_at
+	`
+
+	err := r.db.QueryRowContext(
+		ctx,
+		query,
+		integration.UserID,
+		integration.Platform,
+		integration.Handle,
+		integration.AccessToken,
+		integration.IsActive,
+	).Scan(
+		&integration.ID,
+		&integration.CreatedAt,
+		&integration.LastSyncedAt,
+	)
+
+	return integration, err
+}
+
 func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userID string) ([]models.Integration, error) {
 	query := `
 		SELECT id, user_id, platform, handle, access_token, is_active, last_synced_at, created_at

@@ -39,6 +39,7 @@ func main() {
 	emailService := services.NewEmailServiceFromEnv()
 	authService := services.NewAuthService(
 		userRepo,
+		integrationRepo,
 		os.Getenv("GITHUB_CLIENT_ID"),
 		os.Getenv("GITHUB_CLIENT_SECRET"),
 		os.Getenv("GITHUB_REDIRECT_URL"),

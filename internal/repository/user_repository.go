@@ -78,6 +78,39 @@ func (r *UserRepository) GetUserByEmail(ctx context.Context, email string) (mode
 
 }
 
+func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (models.User, error) {
+	query := `
+        SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug, created_at, updated_at
+        FROM users
+        WHERE id = $1
+    `
+	var user models.User
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.EmailFrequency,
+		&user.Timezone,
+		&user.DigestTime,
+		&user.EmailOptIn,
+		&user.ProfilePublic,
+		&user.GithubHandle,
+		&user.LeetcodeHandle,
+		&user.CodeforcesHandle,
+		&user.PublicSlug,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.User{}, errors.New("user not found")
+		}
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
 func (r *UserRepository) GetUserByUsername(ctx context.Context, username string) (models.User, error) {
 	query := `
         SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug

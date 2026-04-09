@@ -7,23 +7,27 @@ import (
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
 type UserHandler struct {
 	userRepo        *repository.UserRepository
 	integrationRepo *repository.IntegrationRepository
 	metricRepo      *repository.MetricRepository
+	aggregator      *services.AggregatorService
 }
 
 func NewUserHandler(
 	userRepo *repository.UserRepository,
 	integrationRepo *repository.IntegrationRepository,
 	metricRepo *repository.MetricRepository,
+	aggregator *services.AggregatorService,
 ) *UserHandler {
 	return &UserHandler{
 		userRepo:        userRepo,
 		integrationRepo: integrationRepo,
 		metricRepo:      metricRepo,
+		aggregator:      aggregator,
 	}
 }
 
@@ -221,6 +225,39 @@ func (h *UserHandler) GetActiveIntegrations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, integrations)
+}
+
+func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	targetDate, err := parseDateParamOrDefault(r, "date", time.Now().UTC().Truncate(24*time.Hour))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+		return
+	}
+
+	user, err := h.userRepo.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	metric, err := h.aggregator.AggregateUserForDate(r.Context(), user, targetDate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "aggregation_complete",
+		"user_id": userID,
+		"date":    targetDate.Format("2006-01-02"),
+		"metric":  metric,
+	})
 }
 
 func (h *UserHandler) GetDailyMetric(w http.ResponseWriter, r *http.Request) {

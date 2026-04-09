@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,22 +25,29 @@ type AuthUserRepository interface {
 	UpdateGithubHandle(ctx context.Context, userId string, githubHandle string) error
 }
 
+type AuthIntegrationRepository interface {
+	UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error)
+}
+
 type AuthService struct {
-	userRepo    AuthUserRepository
-	oauthConfig *oauth2.Config
-	httpClient  *http.Client
-	tokenSecret string
+	userRepo        AuthUserRepository
+	integrationRepo AuthIntegrationRepository
+	oauthConfig     *oauth2.Config
+	httpClient      *http.Client
+	tokenSecret     string
 }
 
 func NewAuthService(
 	userRepo AuthUserRepository,
+	integrationRepo AuthIntegrationRepository,
 	clientID string,
 	clientSecret string,
 	redirectURL string,
 	tokenSecret string,
 ) *AuthService {
 	return &AuthService{
-		userRepo: userRepo,
+		userRepo:        userRepo,
+		integrationRepo: integrationRepo,
 		oauthConfig: &oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -104,6 +112,16 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 	}
 	user.GithubHandle.String = profile.Login
 	user.GithubHandle.Valid = true
+
+	if _, err := s.integrationRepo.UpsertIntegration(ctx, models.Integration{
+		UserID:      user.ID,
+		Platform:    "github",
+		Handle:      profile.Login,
+		AccessToken: sql.NullString{String: token.AccessToken, Valid: token.AccessToken != ""},
+		IsActive:    true,
+	}); err != nil {
+		return models.User{}, "", fmt.Errorf("failed to upsert github integration: %w", err)
+	}
 
 	authToken, err := s.generateSignedToken(user)
 	if err != nil {
