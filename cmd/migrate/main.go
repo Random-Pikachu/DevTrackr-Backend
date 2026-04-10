@@ -30,7 +30,7 @@ func main() {
 		email VARCHAR(255) UNIQUE NOT NULL,
 		email_frequency VARCHAR(50) DEFAULT 'daily',
 		timezone VARCHAR(100) DEFAULT 'UTC',
-		digest_time VARCHAR(5) DEFAULT '20:00',
+		digest_time VARCHAR(5) DEFAULT '22:00',
 		email_opt_in BOOLEAN DEFAULT TRUE,
 		profile_public BOOLEAN DEFAULT FALSE,
 		public_slug VARCHAR(255) UNIQUE,
@@ -39,7 +39,10 @@ func main() {
 	);
 
 	ALTER TABLE users
-	ADD COLUMN IF NOT EXISTS digest_time VARCHAR(5) DEFAULT '20:00';
+	ADD COLUMN IF NOT EXISTS digest_time VARCHAR(5) DEFAULT '22:00';
+
+	ALTER TABLE users
+	ALTER COLUMN digest_time SET DEFAULT '22:00';
 
 	ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS username VARCHAR(255);

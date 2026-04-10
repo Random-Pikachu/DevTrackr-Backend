@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"strings"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
 )
@@ -16,6 +17,11 @@ func NewIntegrationRepository(db *sql.DB) *IntegrationRepository {
 }
 
 func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration models.Integration) (models.Integration, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Integration{}, err
+	}
+	defer tx.Rollback()
 
 	query := `
 		INSERT INTO integrations (user_id, platform, handle, access_token, is_active)
@@ -23,7 +29,7 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 		RETURNING id, created_at
 	`
 
-	err := r.db.QueryRowContext(
+	err = tx.QueryRowContext(
 		ctx,
 		query,
 		integration.UserID,
@@ -35,10 +41,28 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 		&integration.ID,
 		&integration.CreatedAt,
 	)
-	return integration, err
+	if err != nil {
+		return models.Integration{}, err
+	}
+
+	if err := syncUserIntegrationHandleTx(ctx, tx, integration.UserID.String(), integration.Platform, integration.Handle, integration.IsActive); err != nil {
+		return models.Integration{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return models.Integration{}, err
+	}
+
+	return integration, nil
 }
 
 func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Integration{}, err
+	}
+	defer tx.Rollback()
+
 	query := `
 		INSERT INTO integrations (user_id, platform, handle, access_token, is_active)
 		VALUES ($1, $2, $3, $4, $5)
@@ -51,7 +75,7 @@ func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integrati
 		RETURNING id, created_at, last_synced_at
 	`
 
-	err := r.db.QueryRowContext(
+	err = tx.QueryRowContext(
 		ctx,
 		query,
 		integration.UserID,
@@ -64,8 +88,19 @@ func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integrati
 		&integration.CreatedAt,
 		&integration.LastSyncedAt,
 	)
+	if err != nil {
+		return models.Integration{}, err
+	}
 
-	return integration, err
+	if err := syncUserIntegrationHandleTx(ctx, tx, integration.UserID.String(), integration.Platform, integration.Handle, integration.IsActive); err != nil {
+		return models.Integration{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return models.Integration{}, err
+	}
+
+	return integration, nil
 }
 
 func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userID string) ([]models.Integration, error) {
@@ -108,12 +143,53 @@ func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userI
 }
 
 func (r *IntegrationRepository) DeactivateIntegration(ctx context.Context, integrationID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	query := `
 		UPDATE integrations
 		SET is_active = false
 		WHERE id = $1
+		RETURNING user_id::text, platform
 	`
 
-	_, err := r.db.ExecContext(ctx, query, integrationID)
-	return err
+	var userID string
+	var platform string
+	if err := tx.QueryRowContext(ctx, query, integrationID).Scan(&userID, &platform); err != nil {
+		return err
+	}
+
+	if err := syncUserIntegrationHandleTx(ctx, tx, userID, platform, "", false); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func syncUserIntegrationHandleTx(ctx context.Context, tx *sql.Tx, userID, platform, handle string, isActive bool) error {
+	var value sql.NullString
+	if isActive && handle != "" {
+		value = sql.NullString{String: handle, Valid: true}
+	}
+
+	switch strings.ToLower(platform) {
+	case "github":
+		_, err := tx.ExecContext(ctx, `UPDATE users SET github_handle = $1, updated_at = NOW() WHERE id = $2`, value, userID)
+		return err
+	case "leetcode":
+		_, err := tx.ExecContext(ctx, `UPDATE users SET leetcode_handle = $1, updated_at = NOW() WHERE id = $2`, value, userID)
+		return err
+	case "codeforces":
+		_, err := tx.ExecContext(ctx, `UPDATE users SET codeforces_handle = $1, updated_at = NOW() WHERE id = $2`, value, userID)
+		return err
+	default:
+		return nil
+	}
 }

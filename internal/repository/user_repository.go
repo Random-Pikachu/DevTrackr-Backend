@@ -19,7 +19,7 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (models.User, error) {
 	query := `
 		INSERT INTO users (username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public)
-		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, ''), '20:00'), $6, $7)
+		VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, ''), '22:00'), $6, $7)
 		RETURNING id, created_at, updated_at
 	`
 

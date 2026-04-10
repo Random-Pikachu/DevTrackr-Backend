@@ -100,7 +100,7 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 			Email:          profile.Email,
 			EmailFrequency: "daily",
 			Timezone:       defaultDigestTimezone,
-			DigestTime:     "20:00",
+			DigestTime:     "22:00",
 			EmailOptIn:     true,
 			ProfilePublic:  false,
 		})

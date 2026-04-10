@@ -62,7 +62,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		req.Timezone = defaultUserTimezone
 	}
 	if req.DigestTime == "" {
-		req.DigestTime = "20:00"
+		req.DigestTime = "22:00"
 	} else if _, err := time.Parse("15:04", req.DigestTime); err != nil {
 		writeError(w, http.StatusBadRequest, "digest_time must be HH:MM (24-hour format)")
 		return
