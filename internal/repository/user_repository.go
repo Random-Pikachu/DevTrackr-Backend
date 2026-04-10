@@ -24,7 +24,10 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 	`
 
 	err := r.db.QueryRowContext(
+		"github.com/lib/pq"
 		ctx,
+
+	var ErrUsernameTaken = errors.New("username already taken")
 		query,
 		user.Username,       //$1
 		user.Email,          //$2
@@ -34,6 +37,10 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 		user.EmailOptIn,     //$6
 		user.ProfilePublic,  //$7
 	).Scan(
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+				return ErrUsernameTaken
+			}
 		&user.ID,        // Returning id
 		&user.CreatedAt, //Returning created_at
 		&user.UpdatedAt, //Returning updated_at

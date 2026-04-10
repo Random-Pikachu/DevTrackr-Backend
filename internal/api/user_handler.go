@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"database/sql"
 	"log"
 	"net/http"
@@ -193,6 +194,10 @@ func (h *UserHandler) UpdateUsername(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.userRepo.UpdateUsername(r.Context(), userID, req.Username); err != nil {
+		if errors.Is(err, repository.ErrUsernameTaken) {
+			writeError(w, http.StatusConflict, "username already taken")
+			return
+		}
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
