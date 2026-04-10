@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
@@ -46,7 +47,7 @@ func (h *IntegrationHandler) AddIntegration(w http.ResponseWriter, r *http.Reque
 		isActive = *req.IsActive
 	}
 
-	integration, err := h.integrationRepo.AddIntegration(r.Context(), models.Integration{
+	integration, err := h.integrationRepo.UpsertIntegration(r.Context(), models.Integration{
 		UserID:      userUUID,
 		Platform:    req.Platform,
 		Handle:      req.Handle,
@@ -57,8 +58,16 @@ func (h *IntegrationHandler) AddIntegration(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("integration upserted user_id=%s integration_id=%s platform=%s handle=%s active=%t token=%t",
+		req.UserID,
+		integration.ID,
+		req.Platform,
+		req.Handle,
+		integration.IsActive,
+		accessToken.Valid,
+	)
 
-	writeJSON(w, http.StatusCreated, integration)
+	writeJSON(w, http.StatusOK, integration)
 }
 
 func (h *IntegrationHandler) DeactivateIntegration(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +81,7 @@ func (h *IntegrationHandler) DeactivateIntegration(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("integration deactivated integration_id=%s", integrationID)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deactivated"})
 }

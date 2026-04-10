@@ -10,13 +10,14 @@ import (
 func NewRouter(
 	userRepo *repository.UserRepository,
 	integrationRepo *repository.IntegrationRepository,
+	activityRepo *repository.ActivityRepository,
 	metricRepo *repository.MetricRepository,
 	authService *services.AuthService,
 	frontendOAuthCallbackURL string,
 	aggregator *services.AggregatorService,
 	scheduler *services.SchedulerService,
 ) http.Handler {
-	userHandler := NewUserHandler(userRepo, integrationRepo, metricRepo, aggregator)
+	userHandler := NewUserHandler(userRepo, integrationRepo, activityRepo, metricRepo, aggregator, scheduler)
 	integrationHandler := NewIntegrationHandler(integrationRepo)
 	authHandler := NewAuthHandler(authService, frontendOAuthCallbackURL)
 	jobHandler := NewJobHandler(aggregator, scheduler)
@@ -40,7 +41,9 @@ func NewRouter(
 	mux.HandleFunc("PATCH /users/{id}/username", userHandler.UpdateUsername)
 	mux.HandleFunc("PATCH /users/{id}/digest-time", userHandler.UpdateDigestTime)
 	mux.HandleFunc("POST /users/{id}/aggregate", userHandler.AggregateUser)
+	mux.HandleFunc("POST /users/{id}/send-digest", userHandler.SendDigestNow)
 	mux.HandleFunc("GET /users/{id}/integrations/active", userHandler.GetActiveIntegrations)
+	mux.HandleFunc("GET /users/{id}/activities", userHandler.GetActivitiesByDate)
 	mux.HandleFunc("GET /users/{id}/metrics", userHandler.GetDailyMetric)
 	mux.HandleFunc("GET /users/{id}/metrics/range", userHandler.GetMetricRange)
 	mux.HandleFunc("GET /users/{id}/heatmap", userHandler.GetHeatmap)

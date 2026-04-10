@@ -97,7 +97,7 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 		user, err = s.userRepo.CreateUser(ctx, models.User{
 			Email:          profile.Email,
 			EmailFrequency: "daily",
-			Timezone:       "UTC",
+			Timezone:       defaultDigestTimezone,
 			DigestTime:     "20:00",
 			EmailOptIn:     true,
 			ProfilePublic:  false,

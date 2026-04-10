@@ -2,6 +2,7 @@ package api
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"time"
 
@@ -10,24 +11,32 @@ import (
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
+const defaultUserTimezone = "Asia/Kolkata"
+
 type UserHandler struct {
 	userRepo        *repository.UserRepository
 	integrationRepo *repository.IntegrationRepository
+	activityRepo    *repository.ActivityRepository
 	metricRepo      *repository.MetricRepository
 	aggregator      *services.AggregatorService
+	scheduler       *services.SchedulerService
 }
 
 func NewUserHandler(
 	userRepo *repository.UserRepository,
 	integrationRepo *repository.IntegrationRepository,
+	activityRepo *repository.ActivityRepository,
 	metricRepo *repository.MetricRepository,
 	aggregator *services.AggregatorService,
+	scheduler *services.SchedulerService,
 ) *UserHandler {
 	return &UserHandler{
 		userRepo:        userRepo,
 		integrationRepo: integrationRepo,
+		activityRepo:    activityRepo,
 		metricRepo:      metricRepo,
 		aggregator:      aggregator,
+		scheduler:       scheduler,
 	}
 }
 
@@ -50,7 +59,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Timezone == "" {
-		req.Timezone = "UTC"
+		req.Timezone = defaultUserTimezone
 	}
 	if req.DigestTime == "" {
 		req.DigestTime = "20:00"
@@ -72,6 +81,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("user created id=%s email=%s username=%s timezone=%s", user.ID, user.Email, req.Username, user.Timezone)
 
 	writeJSON(w, http.StatusCreated, user)
 }
@@ -97,6 +107,7 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user fetched by email email=%s user_id=%s", email, user.ID)
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -112,6 +123,7 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user fetched by username username=%s user_id=%s", username, user.ID)
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -134,6 +146,7 @@ func (h *UserHandler) UpdateEmailOptIn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user email-opt-in updated user_id=%s enabled=%t", userID, req.EmailOptIn)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -156,6 +169,7 @@ func (h *UserHandler) UpdatePublicProfile(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user profile-public updated user_id=%s public=%t", userID, req.ProfilePublic)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -182,6 +196,7 @@ func (h *UserHandler) UpdateUsername(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user username updated user_id=%s username=%s", userID, req.Username)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -209,6 +224,7 @@ func (h *UserHandler) UpdateDigestTime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("user digest-time updated user_id=%s digest_time=%s", userID, req.DigestTime)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -224,7 +240,36 @@ func (h *UserHandler) GetActiveIntegrations(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("active integrations fetched user_id=%s count=%d", userID, len(integrations))
 	writeJSON(w, http.StatusOK, integrations)
+}
+
+func (h *UserHandler) GetActivitiesByDate(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	dateParam := r.URL.Query().Get("date")
+	if userID == "" || dateParam == "" {
+		writeError(w, http.StatusBadRequest, "user id and date are required")
+		return
+	}
+
+	date, err := time.Parse("2006-01-02", dateParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+		return
+	}
+
+	activities, err := h.activityRepo.GetActivitiesByUserAndDate(r.Context(), userID, date.UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	log.Printf("activities fetched user_id=%s date=%s count=%d", userID, date.Format("2006-01-02"), len(activities))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user_id":    userID,
+		"date":       date.Format("2006-01-02"),
+		"activities": activities,
+	})
 }
 
 func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +296,15 @@ func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("user aggregation complete user_id=%s date=%s github=%d lc_easy=%d lc_medium=%d lc_hard=%d cf=%d",
+		userID,
+		targetDate.Format("2006-01-02"),
+		metric.GithubCommits,
+		metric.LcEasySolved,
+		metric.LcMediumSolved,
+		metric.LcHardSolved,
+		metric.CfProblemsSolved,
+	)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"status":  "aggregation_complete",
@@ -258,6 +312,42 @@ func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
 		"date":    targetDate.Format("2006-01-02"),
 		"metric":  metric,
 	})
+}
+
+func (h *UserHandler) SendDigestNow(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	targetDate, err := parseDateParamOrDefault(r, "date", currentISTDate())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+		return
+	}
+
+	if err := h.scheduler.SendDigestNowForUser(r.Context(), userID, targetDate); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	log.Printf("digest send requested user_id=%s date=%s", userID, targetDate.Format("2006-01-02"))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "digest_processed",
+		"user_id": userID,
+		"date":    targetDate.Format("2006-01-02"),
+	})
+}
+
+func currentISTDate() time.Time {
+	location, err := time.LoadLocation(defaultUserTimezone)
+	if err != nil {
+		return time.Now().UTC().Truncate(24 * time.Hour)
+	}
+
+	localNow := time.Now().In(location)
+	return time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (h *UserHandler) GetDailyMetric(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +369,15 @@ func (h *UserHandler) GetDailyMetric(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	log.Printf("daily metric fetched user_id=%s date=%s github=%d lc_easy=%d lc_medium=%d lc_hard=%d cf=%d",
+		userID,
+		date.Format("2006-01-02"),
+		metric.GithubCommits,
+		metric.LcEasySolved,
+		metric.LcMediumSolved,
+		metric.LcHardSolved,
+		metric.CfProblemsSolved,
+	)
 	writeJSON(w, http.StatusOK, metric)
 }
 
@@ -307,6 +406,7 @@ func (h *UserHandler) GetMetricRange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("metric range fetched user_id=%s start=%s end=%s count=%d", userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), len(metrics))
 	writeJSON(w, http.StatusOK, metrics)
 }
 
@@ -389,6 +489,7 @@ func (h *UserHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
 		"end":     endDate.Format("2006-01-02"),
 		"days":    series,
 	})
+	log.Printf("heatmap fetched user_id=%s start=%s end=%s source_metrics=%d days=%d", userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), len(metrics), len(series))
 }
 
 func toNullString(value string) sql.NullString {

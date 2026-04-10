@@ -12,8 +12,11 @@ import (
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
 )
 
+const defaultDigestTimezone = "Asia/Kolkata"
+
 type SchedulerUserRepository interface {
 	GetDigestEligibleUsers(ctx context.Context) ([]models.User, error)
+	GetUserByID(ctx context.Context, userID string) (models.User, error)
 }
 
 type SchedulerMetricRepository interface {
@@ -112,12 +115,23 @@ func (s *SchedulerService) RunDueDigests(ctx context.Context, now time.Time) err
 	return combinedErr
 }
 
+func (s *SchedulerService) SendDigestNowForUser(ctx context.Context, userID string, digestDate time.Time) error {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	s.logger.Printf("manual digest requested user_id=%s email=%s date=%s", user.ID, user.Email, digestDate.UTC().Truncate(24*time.Hour).Format("2006-01-02"))
+
+	return s.sendFreshDigestToUser(ctx, user, digestDate.UTC().Truncate(24*time.Hour))
+}
+
 func (s *SchedulerService) sendFreshDigestToUser(ctx context.Context, user models.User, digestDate time.Time) error {
 	sent, err := s.emailRepo.HasDigestBeenSent(ctx, user.ID.String(), digestDate)
 	if err != nil {
 		return err
 	}
 	if sent {
+		s.logger.Printf("digest skipped already-sent user_id=%s email=%s date=%s", user.ID, user.Email, digestDate.Format("2006-01-02"))
 		return nil
 	}
 
@@ -134,6 +148,7 @@ func (s *SchedulerService) sendDigestToUser(ctx context.Context, user models.Use
 		return err
 	}
 	if sent {
+		s.logger.Printf("digest skipped already-sent user_id=%s email=%s date=%s", user.ID, user.Email, digestDate.Format("2006-01-02"))
 		return nil
 	}
 
@@ -164,8 +179,10 @@ func (s *SchedulerService) sendDigestToUser(ctx context.Context, user models.Use
 	})
 
 	if sendErr != nil {
+		s.logger.Printf("digest send failed user_id=%s email=%s date=%s error=%v", user.ID, user.Email, digestDate.Format("2006-01-02"), sendErr)
 		return errors.Join(sendErr, logErr)
 	}
+	s.logger.Printf("digest sent user_id=%s email=%s date=%s provider_message_id=%s", user.ID, user.Email, digestDate.Format("2006-01-02"), messageID)
 	return logErr
 }
 
@@ -202,7 +219,7 @@ func isNotFoundError(err error) bool {
 func isUserDueAt(user models.User, nowUTC time.Time) (bool, time.Time, error) {
 	timezone := user.Timezone
 	if timezone == "" {
-		timezone = "UTC"
+		timezone = defaultDigestTimezone
 	}
 
 	location, err := time.LoadLocation(timezone)

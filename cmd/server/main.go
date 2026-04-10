@@ -59,6 +59,7 @@ func main() {
 	router := api.NewRouter(
 		userRepo,
 		integrationRepo,
+		activityRepo,
 		metricRepo,
 		authService,
 		frontendOAuthCallbackURL,

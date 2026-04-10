@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -30,6 +31,7 @@ func (h *JobHandler) RunAggregation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("manual aggregation job complete date=%s", targetDate.Format("2006-01-02"))
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "aggregation_complete",
@@ -48,6 +50,7 @@ func (h *JobHandler) RunNightly(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	log.Printf("manual nightly job complete date=%s", targetDate.Format("2006-01-02"))
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "nightly_complete",

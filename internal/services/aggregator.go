@@ -110,6 +110,13 @@ func (s *AggregatorService) AggregateUserForDate(
 		if err != nil {
 			return models.DailyMetric{}, fmt.Errorf("collector fetch failed for %s: %w", integration.Platform, err)
 		}
+		s.logger.Printf("collector fetch complete user_id=%s platform=%s handle=%s date=%s activities=%d",
+			user.ID,
+			integration.Platform,
+			integration.Handle,
+			normalizedDate.Format("2006-01-02"),
+			len(activities),
+		)
 
 		for _, activity := range activities {
 			metadataBytes, err := json.Marshal(activity.Metadata)
@@ -144,6 +151,17 @@ func (s *AggregatorService) AggregateUserForDate(
 	if err != nil {
 		return models.DailyMetric{}, fmt.Errorf("failed to save daily metric: %w", err)
 	}
+	s.logger.Printf("daily metric upserted user_id=%s date=%s github=%d lc_easy=%d lc_medium=%d lc_hard=%d cf=%d streak=%d raw_activities=%d",
+		user.ID,
+		normalizedDate.Format("2006-01-02"),
+		savedMetric.GithubCommits,
+		savedMetric.LcEasySolved,
+		savedMetric.LcMediumSolved,
+		savedMetric.LcHardSolved,
+		savedMetric.CfProblemsSolved,
+		savedMetric.StreakDays,
+		len(rawActivities),
+	)
 
 	return savedMetric, nil
 }
