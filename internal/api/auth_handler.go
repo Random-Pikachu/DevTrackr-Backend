@@ -65,7 +65,7 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, token, err := h.authService.HandleGitHubCallback(r.Context(), code)
+	user, token, isNewUser, err := h.authService.HandleGitHubCallback(r.Context(), code)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -102,13 +102,18 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 			params.Set("login", user.GithubHandle.String)
 		}
 		params.Set("email", user.Email)
+		if isNewUser {
+			params.Set("is_new_user", "true")
+		} else {
+			params.Set("is_new_user", "false")
+		}
 		callbackURL.RawQuery = params.Encode()
 
 		http.Redirect(w, r, callbackURL.String(), http.StatusFound)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "user": user})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "user": user, "is_new_user": isNewUser})
 }
 
 func generateStateToken() (string, error) {

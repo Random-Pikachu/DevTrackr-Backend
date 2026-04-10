@@ -71,29 +71,31 @@ func (s *AuthService) GetGitHubAuthURL(state string) string {
 	return s.oauthConfig.AuthCodeURL(state)
 }
 
-func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (models.User, string, error) {
+func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (models.User, string, bool, error) {
 	if !s.IsConfigured() {
-		return models.User{}, "", errors.New("github oauth is not configured")
+		return models.User{}, "", false, errors.New("github oauth is not configured")
 	}
 
 	token, err := s.oauthConfig.Exchange(ctx, code)
 	if err != nil {
-		return models.User{}, "", fmt.Errorf("failed to exchange oauth code: %w", err)
+		return models.User{}, "", false, fmt.Errorf("failed to exchange oauth code: %w", err)
 	}
 
 	profile, err := s.fetchGitHubProfile(ctx, token.AccessToken)
 	if err != nil {
-		return models.User{}, "", err
+		return models.User{}, "", false, err
 	}
 	if profile.Email == "" {
-		return models.User{}, "", errors.New("github account email is unavailable")
+		return models.User{}, "", false, errors.New("github account email is unavailable")
 	}
 
+	isNewUser := false
 	user, err := s.userRepo.GetUserByEmail(ctx, profile.Email)
 	if err != nil {
 		if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-			return models.User{}, "", err
+			return models.User{}, "", false, err
 		}
+		isNewUser = true
 		user, err = s.userRepo.CreateUser(ctx, models.User{
 			Email:          profile.Email,
 			EmailFrequency: "daily",
@@ -103,12 +105,12 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 			ProfilePublic:  false,
 		})
 		if err != nil {
-			return models.User{}, "", fmt.Errorf("failed to create github oauth user: %w", err)
+			return models.User{}, "", false, fmt.Errorf("failed to create github oauth user: %w", err)
 		}
 	}
 
 	if err := s.userRepo.UpdateGithubHandle(ctx, user.ID.String(), profile.Login); err != nil {
-		return models.User{}, "", err
+		return models.User{}, "", false, err
 	}
 	user.GithubHandle.String = profile.Login
 	user.GithubHandle.Valid = true
@@ -120,15 +122,15 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 		AccessToken: sql.NullString{String: token.AccessToken, Valid: token.AccessToken != ""},
 		IsActive:    true,
 	}); err != nil {
-		return models.User{}, "", fmt.Errorf("failed to upsert github integration: %w", err)
+		return models.User{}, "", false, fmt.Errorf("failed to upsert github integration: %w", err)
 	}
 
 	authToken, err := s.generateSignedToken(user)
 	if err != nil {
-		return models.User{}, "", err
+		return models.User{}, "", false, err
 	}
 
-	return user, authToken, nil
+	return user, authToken, isNewUser, nil
 }
 
 type githubProfile struct {
