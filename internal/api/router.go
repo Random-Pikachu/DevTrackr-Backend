@@ -41,6 +41,7 @@ func NewRouter(
 	mux.HandleFunc("PATCH /users/{id}/username", userHandler.UpdateUsername)
 	mux.HandleFunc("PATCH /users/{id}/digest-time", userHandler.UpdateDigestTime)
 	mux.HandleFunc("POST /users/{id}/aggregate", userHandler.AggregateUser)
+	mux.HandleFunc("POST /users/{id}/aggregate/range", userHandler.AggregateUserRange)
 	mux.HandleFunc("POST /users/{id}/send-digest", userHandler.SendDigestNow)
 	mux.HandleFunc("GET /users/{id}/integrations/active", userHandler.GetActiveIntegrations)
 	mux.HandleFunc("GET /users/{id}/activities", userHandler.GetActivitiesByDate)

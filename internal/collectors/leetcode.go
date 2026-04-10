@@ -10,13 +10,13 @@ import (
 
 type LeetcodeCollector struct {
 	endpoint string
-	client  *http.Client
+	client   *http.Client
 }
 
 func NewLeetcodeCollector() *LeetcodeCollector {
 	return &LeetcodeCollector{
 		endpoint: "https://leetcode.com/graphql",
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:   &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -27,7 +27,6 @@ type lcRecentSubmission struct {
 	Lang      string `json:"lang"`
 	TitleSlug string `json:"titleSlug"`
 }
-
 
 type lcSubmissionsResponse struct {
 	Data struct {
@@ -75,15 +74,14 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 		})
 	}
 
-
 	// pretty, _ := json.MarshalIndent(activities, "", "  ")
 	// fmt.Println(string(pretty))
 
 	return activities, nil
 }
 
-func (l* LeetcodeCollector) fetchSubmissionsandSnapshot (handle string) ([]lcRecentSubmission,  error) {
-	query:=map[string]interface{}{
+func (l *LeetcodeCollector) fetchSubmissionsandSnapshot(handle string) ([]lcRecentSubmission, error) {
+	query := map[string]interface{}{
 		"query": `
 			query userActivityAndStats($username: String!) {
 				recentSubmissionList(username: $username, limit: 20) {
@@ -107,7 +105,7 @@ func (l* LeetcodeCollector) fetchSubmissionsandSnapshot (handle string) ([]lcRec
 	}
 
 	body, _ := json.Marshal(query)
-	req, _:= http.NewRequest("POST", l.endpoint, bytes.NewBuffer(body))
+	req, _ := http.NewRequest("POST", l.endpoint, bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Referer", "https://leetcode.com")
 	resp, err := l.client.Do(req)
@@ -120,8 +118,6 @@ func (l* LeetcodeCollector) fetchSubmissionsandSnapshot (handle string) ([]lcRec
 	if err := json.NewDecoder(resp.Body).Decode(&lcResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-
-
 
 	return lcResp.Data.RecentSubmissionList, nil
 }
@@ -180,7 +176,6 @@ func (l *LeetcodeCollector) fetchDifficulties(subs []lcRecentSubmission) (map[st
 
 	return result, nil
 }
-
 
 func (l *LeetcodeCollector) ValidateHandle(handle string) (bool, error) {
 	query := map[string]interface{}{

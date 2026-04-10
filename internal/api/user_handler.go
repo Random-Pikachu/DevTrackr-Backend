@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log"
@@ -296,7 +297,7 @@ func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	metric, err := h.aggregator.AggregateUserForDate(r.Context(), user, targetDate)
+	metric, err := h.aggregateUserForDate(r.Context(), user, targetDate)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -317,6 +318,99 @@ func (h *UserHandler) AggregateUser(w http.ResponseWriter, r *http.Request) {
 		"date":    targetDate.Format("2006-01-02"),
 		"metric":  metric,
 	})
+}
+
+func (h *UserHandler) AggregateUserRange(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	startParam := r.URL.Query().Get("start")
+	endParam := r.URL.Query().Get("end")
+	if startParam == "" || endParam == "" {
+		writeError(w, http.StatusBadRequest, "start and end query parameters are required")
+		return
+	}
+
+	startDate, err := time.Parse("2006-01-02", startParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "start must be YYYY-MM-DD")
+		return
+	}
+	endDate, err := time.Parse("2006-01-02", endParam)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "end must be YYYY-MM-DD")
+		return
+	}
+
+	startDate = normalizeDateToISTDayUTC(startDate)
+	endDate = normalizeDateToISTDayUTC(endDate)
+	if endDate.Before(startDate) {
+		writeError(w, http.StatusBadRequest, "end must be greater than or equal to start")
+		return
+	}
+
+	user, err := h.userRepo.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	type dayResult struct {
+		Date   string             `json:"date"`
+		Metric models.DailyMetric `json:"metric"`
+	}
+
+	results := make([]dayResult, 0)
+	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
+		metric, err := h.aggregateUserForDate(r.Context(), user, day)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		results = append(results, dayResult{
+			Date:   day.Format("2006-01-02"),
+			Metric: metric,
+		})
+	}
+
+	log.Printf("user bulk aggregation complete user_id=%s start=%s end=%s days=%d",
+		userID,
+		startDate.Format("2006-01-02"),
+		endDate.Format("2006-01-02"),
+		len(results),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         "bulk_aggregation_complete",
+		"user_id":        userID,
+		"start":          startDate.Format("2006-01-02"),
+		"end":            endDate.Format("2006-01-02"),
+		"days_processed": len(results),
+		"results":        results,
+	})
+}
+
+func (h *UserHandler) aggregateUserForDate(ctx context.Context, user models.User, targetDate time.Time) (models.DailyMetric, error) {
+	metric, err := h.aggregator.AggregateUserForDate(ctx, user, targetDate)
+	if err != nil {
+		return models.DailyMetric{}, err
+	}
+
+	log.Printf("user aggregation complete user_id=%s date=%s github=%d lc_easy=%d lc_medium=%d lc_hard=%d cf=%d",
+		user.ID,
+		targetDate.Format("2006-01-02"),
+		metric.GithubCommits,
+		metric.LcEasySolved,
+		metric.LcMediumSolved,
+		metric.LcHardSolved,
+		metric.CfProblemsSolved,
+	)
+
+	return metric, nil
 }
 
 func (h *UserHandler) SendDigestNow(w http.ResponseWriter, r *http.Request) {
