@@ -40,6 +40,13 @@ type AggregatorService struct {
 	logger           *log.Logger
 }
 
+var istLocation = time.FixedZone("IST", 5*60*60+30*60)
+
+func normalizeDateToISTDayUTC(input time.Time) time.Time {
+	year, month, day := input.In(istLocation).Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
 func NewAggregatorService(
 	userRepo AggregatorUserRepository,
 	integrationRepo AggregatorIntegrationRepository,
@@ -61,7 +68,7 @@ func NewAggregatorService(
 }
 
 func (s *AggregatorService) RunDailyAggregation(ctx context.Context, date time.Time) error {
-	normalizedDate := date.UTC().Truncate(24 * time.Hour)
+	normalizedDate := normalizeDateToISTDayUTC(date)
 
 	users, err := s.userRepo.GetAllUsers(ctx)
 	if err != nil {
@@ -85,7 +92,7 @@ func (s *AggregatorService) AggregateUserForDate(
 	user models.User,
 	date time.Time,
 ) (models.DailyMetric, error) {
-	normalizedDate := date.UTC().Truncate(24 * time.Hour)
+	normalizedDate := normalizeDateToISTDayUTC(date)
 
 	integrations, err := s.integrationRepo.GetActiveIntegrations(ctx, user.ID.String())
 	if err != nil {
@@ -110,6 +117,24 @@ func (s *AggregatorService) AggregateUserForDate(
 		if err != nil {
 			return models.DailyMetric{}, fmt.Errorf("collector fetch failed for %s: %w", integration.Platform, err)
 		}
+		// activitiesJSON, marshalErr := json.Marshal(activities)
+		// if marshalErr != nil {
+		// 	s.logger.Printf("collector raw output encode failed user_id=%s platform=%s handle=%s date=%s err=%v",
+		// 		user.ID,
+		// 		integration.Platform,
+		// 		integration.Handle,
+		// 		normalizedDate.Format("2006-01-02"),
+		// 		marshalErr,
+		// 	)
+		// } else {
+		// 	s.logger.Printf("collector raw output user_id=%s platform=%s handle=%s date=%s payload=%s",
+		// 		user.ID,
+		// 		integration.Platform,
+		// 		integration.Handle,
+		// 		normalizedDate.Format("2006-01-02"),
+		// 		string(activitiesJSON),
+		// 	)
+		// }
 		s.logger.Printf("collector fetch complete user_id=%s platform=%s handle=%s date=%s activities=%d",
 			user.ID,
 			integration.Platform,
@@ -184,8 +209,8 @@ func (s *AggregatorService) computeStreak(
 		return 0, err
 	}
 
-	yesterday := date.AddDate(0, 0, -1).UTC().Truncate(24 * time.Hour)
-	previousDate := previousMetric.MetricDate.UTC().Truncate(24 * time.Hour)
+	yesterday := normalizeDateToISTDayUTC(date.AddDate(0, 0, -1))
+	previousDate := normalizeDateToISTDayUTC(previousMetric.MetricDate)
 	if previousDate.Equal(yesterday) && previousMetric.StreakDays > 0 {
 		return previousMetric.StreakDays + 1, nil
 	}
@@ -196,7 +221,7 @@ func (s *AggregatorService) computeStreak(
 func buildMetricFromActivities(userID uuid.UUID, date time.Time, activities []collectors.ActivityData) models.DailyMetric {
 	metric := models.DailyMetric{
 		UserID:     userID,
-		MetricDate: date.UTC().Truncate(24 * time.Hour),
+		MetricDate: normalizeDateToISTDayUTC(date),
 	}
 
 	solvedCFProblems := make(map[string]struct{})

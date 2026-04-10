@@ -8,6 +8,13 @@ import (
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
+var istLocation = time.FixedZone("IST", 5*60*60+30*60)
+
+func normalizeDateToISTDayUTC(input time.Time) time.Time {
+	year, month, day := input.In(istLocation).Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
 type JobHandler struct {
 	aggregator *services.AggregatorService
 	scheduler  *services.SchedulerService
@@ -61,11 +68,11 @@ func (h *JobHandler) RunNightly(w http.ResponseWriter, r *http.Request) {
 func parseDateParamOrDefault(r *http.Request, key string, fallback time.Time) (time.Time, error) {
 	raw := r.URL.Query().Get(key)
 	if raw == "" {
-		return fallback.UTC().Truncate(24 * time.Hour), nil
+		return normalizeDateToISTDayUTC(fallback), nil
 	}
 	parsed, err := time.Parse("2006-01-02", raw)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return parsed.UTC().Truncate(24 * time.Hour), nil
+	return normalizeDateToISTDayUTC(parsed), nil
 }

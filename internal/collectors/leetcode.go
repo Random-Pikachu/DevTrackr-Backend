@@ -76,8 +76,8 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 	}
 
 
-	pretty, _ := json.MarshalIndent(activities, "", "  ")
-	fmt.Println(string(pretty))
+	// pretty, _ := json.MarshalIndent(activities, "", "  ")
+	// fmt.Println(string(pretty))
 
 	return activities, nil
 }

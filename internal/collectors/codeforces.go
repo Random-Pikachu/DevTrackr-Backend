@@ -35,9 +35,22 @@ type cfSubmissionsResponse struct {
 	Result []cfSubmission `json:"result"`
 }
 
+var istLocation = time.FixedZone("IST", 5*60*60+30*60)
+
+func istDateParts(t time.Time) (int, time.Month, int) {
+	return t.In(istLocation).Date()
+}
+
+func istDayRange(t time.Time) (time.Time, time.Time) {
+	year, month, day := istDateParts(t)
+	start := time.Date(year, month, day, 0, 0, 0, 0, istLocation)
+	end := start.Add(24*time.Hour - time.Second)
+	return start, end
+}
+
 func sameDay(a, b time.Time) bool {
-	ay, am, ad := a.UTC().Date()
-	by, bm, bd := b.UTC().Date()
+	ay, am, ad := istDateParts(a)
+	by, bm, bd := istDateParts(b)
 	return ay == by && am == bm && ad == bd
 }
 
@@ -77,8 +90,8 @@ func (c *CodeforcesCollector) FetchDailyActivity(handle string, date time.Time) 
 			},
 		})
 	}
-	pretty, _ := json.MarshalIndent(activities, "", "  ")
-	fmt.Println(string(pretty))
+	// pretty, _ := json.MarshalIndent(activities, "", "  ")
+	// fmt.Println(string(pretty))
 
 	return activities, nil
 }

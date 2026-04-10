@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -23,6 +25,150 @@ func NewGitHubCollector(token string) *GitHubCollector {
 }
 
 func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]ActivityData, error) {
+	normalizedDate := date.UTC().Truncate(24 * time.Hour)
+
+	searchActivities, searchErr := g.fetchDailyActivityByCommitSearch(handle, normalizedDate)
+	if searchErr == nil && len(searchActivities) > 0 {
+		return searchActivities, nil
+	}
+
+	eventActivities, eventErr := g.fetchDailyActivityFromEvents(handle, normalizedDate)
+	if eventErr == nil {
+		if len(eventActivities) > 0 {
+			return eventActivities, nil
+		}
+		if searchErr == nil {
+			return nil, nil
+		}
+	}
+
+	if searchErr != nil && eventErr != nil {
+		return nil, fmt.Errorf("github commit-search failed: %v; events fallback failed: %w", searchErr, eventErr)
+	}
+	if searchErr != nil {
+		return nil, searchErr
+	}
+	return nil, eventErr
+}
+
+func (g *GitHubCollector) fetchDailyActivityByCommitSearch(handle string, date time.Time) ([]ActivityData, error) {
+	type searchItem struct {
+		SHA        string `json:"sha"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+
+	type searchResponse struct {
+		Items []searchItem `json:"items"`
+	}
+
+	type repoActivity struct {
+		commitCount int
+		messages    []string
+		seenSHAs    map[string]struct{}
+	}
+
+	repoActivities := map[string]*repoActivity{}
+	startIST, endIST := istDayRange(date)
+	targetDay := startIST.Format("2006-01-02")
+	query := fmt.Sprintf("author:%s committer-date:%s..%s", handle, startIST.Format(time.RFC3339), endIST.Format(time.RFC3339))
+
+	for page := 1; ; page++ {
+		endpoint := fmt.Sprintf("%s/search/commits?q=%s&per_page=100&page=%d", g.apiBase, url.QueryEscape(query), page)
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		if g.token != "" {
+			req.Header.Set("Authorization", "Bearer "+g.token)
+		}
+
+		resp, err := g.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("github commit-search request failed: %w", err)
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read github commit-search response: %w", readErr)
+		}
+		// log.Printf("github raw response endpoint=search/commits handle=%s date=%s page=%d status=%d body=%s",
+		// 	handle,
+		// 	targetDay,
+		// 	page,
+		// 	resp.StatusCode,
+		// 	string(body),
+		// )
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("github commit-search failed with status %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result searchResponse
+		decodeErr := json.Unmarshal(body, &result)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode github commit-search response: %w", decodeErr)
+		}
+		log.Printf("github commit-search summary handle=%s date=%s page=%d status=%d items=%d",
+			handle,
+			targetDay,
+			page,
+			resp.StatusCode,
+			len(result.Items),
+		)
+
+		if len(result.Items) == 0 {
+			break
+		}
+
+		for _, item := range result.Items {
+			repo := item.Repository.FullName
+			if repo == "" {
+				repo = "unknown"
+			}
+
+			if _, ok := repoActivities[repo]; !ok {
+				repoActivities[repo] = &repoActivity{seenSHAs: make(map[string]struct{})}
+			}
+
+			if _, seen := repoActivities[repo].seenSHAs[item.SHA]; seen {
+				continue
+			}
+
+			repoActivities[repo].seenSHAs[item.SHA] = struct{}{}
+			repoActivities[repo].commitCount++
+			repoActivities[repo].messages = append(repoActivities[repo].messages, item.Commit.Message)
+		}
+
+		if len(result.Items) < 100 {
+			break
+		}
+	}
+
+	activities := make([]ActivityData, 0, len(repoActivities))
+	for repo, activity := range repoActivities {
+		activities = append(activities, ActivityData{
+			Platform:     "github",
+			Date:         date,
+			ActivityType: "push",
+			Metadata: map[string]interface{}{
+				"repo":         repo,
+				"commit_count": activity.commitCount,
+				"messages":     activity.messages,
+			},
+		})
+	}
+
+	return activities, nil
+}
+
+func (g *GitHubCollector) fetchDailyActivityFromEvents(handle string, date time.Time) ([]ActivityData, error) {
 	type githubEvent struct {
 		Type      string `json:"type"`
 		CreatedAt string `json:"created_at"`
@@ -43,7 +189,7 @@ func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]A
 
 	repoActivities := map[string]*repoActivity{}
 
-	targetDayStart := date.UTC().Truncate(24 * time.Hour)
+	targetDayStartIST, _ := istDayRange(date)
 
 	for page := 1; ; page++ {
 		url := fmt.Sprintf("%s/users/%s/events?per_page=100&page=%d", g.apiBase, handle, page)
@@ -60,17 +206,35 @@ func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]A
 		if err != nil {
 			return nil, fmt.Errorf("github request failed: %w", err)
 		}
-		defer resp.Body.Close()
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read github events response: %w", readErr)
+		}
+		// log.Printf("github raw response endpoint=users/events handle=%s date=%s page=%d status=%d body=%s",
+		// 	handle,
+		// 	date.Format("2006-01-02"),
+		// 	page,
+		// 	resp.StatusCode,
+		// 	string(body),
+		// )
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
 			return nil, fmt.Errorf("github request failed with status %d: %s", resp.StatusCode, string(body))
 		}
 
 		var events []githubEvent
-		if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+		if err := json.Unmarshal(body, &events); err != nil {
 			return nil, fmt.Errorf("failed to decode github response: %w", err)
 		}
+		log.Printf("github events summary handle=%s date=%s page=%d status=%d events=%d",
+			handle,
+			date.Format("2006-01-02"),
+			page,
+			resp.StatusCode,
+			len(events),
+		)
 
 		if len(events) == 0 {
 			break
@@ -82,12 +246,13 @@ func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]A
 			if err != nil {
 				continue
 			}
+			eventTimeIST := eventTime.In(istLocation)
 
-			if !eventTime.UTC().Before(targetDayStart) {
+			if !eventTimeIST.Before(targetDayStartIST) {
 				allEventsOlderThanTargetDay = false
 			}
 
-			if eventTime.UTC().Before(targetDayStart) {
+			if eventTimeIST.Before(targetDayStartIST) {
 				continue
 			}
 
@@ -140,9 +305,6 @@ func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]A
 		})
 	}
 
-	pretty, _ := json.MarshalIndent(activities, "", "  ")
-	fmt.Println(string(pretty))
-
 	return activities, nil
 }
 
@@ -179,7 +341,18 @@ func (g *GitHubCollector) fetchPushCommits(repo, beforeSHA, headSHA string) ([]s
 	if err != nil {
 		return nil, fmt.Errorf("github compare request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("failed to read github compare response: %w", readErr)
+	}
+	// log.Printf("github raw response endpoint=repos/compare repo=%s before=%s head=%s status=%d body=%s",
+	// 	repo,
+	// 	beforeSHA,
+	// 	headSHA,
+	// 	resp.StatusCode,
+	// 	string(body),
+	// )
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github compare request failed with status %d", resp.StatusCode)
@@ -194,9 +367,16 @@ func (g *GitHubCollector) fetchPushCommits(repo, beforeSHA, headSHA string) ([]s
 		} `json:"commits"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode github compare response: %w", err)
 	}
+	log.Printf("github compare summary repo=%s before=%s head=%s status=%d commits=%d",
+		repo,
+		beforeSHA,
+		headSHA,
+		resp.StatusCode,
+		len(result.Commits),
+	)
 
 	commits := make([]struct {
 		SHA     string
@@ -239,7 +419,20 @@ func (g *GitHubCollector) fetchCommit(repo, sha string) (struct {
 			Message string
 		}{}, fmt.Errorf("github commit request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return struct {
+			SHA     string
+			Message string
+		}{}, fmt.Errorf("failed to read github commit response: %w", readErr)
+	}
+	// log.Printf("github raw response endpoint=repos/commits repo=%s sha=%s status=%d body=%s",
+	// 	repo,
+	// 	sha,
+	// 	resp.StatusCode,
+	// 	string(body),
+	// )
 
 	if resp.StatusCode != http.StatusOK {
 		return struct {
@@ -255,7 +448,7 @@ func (g *GitHubCollector) fetchCommit(repo, sha string) (struct {
 		} `json:"commit"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return struct {
 			SHA     string
 			Message string
