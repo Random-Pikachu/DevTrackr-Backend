@@ -1,8 +1,8 @@
 package api
 
 import (
-	"errors"
 	"database/sql"
+	"errors"
 	"log"
 	"net/http"
 	"time"
