@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -40,10 +41,17 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 		return nil, err
 	}
 
+	submissionCountForDay, err := l.fetchSubmissionCountForDate(handle, date)
+	if err != nil {
+		return nil, err
+	}
+
 	var todaysSubs []lcRecentSubmission
 	for _, sub := range submissions {
-		var ts int64
-		fmt.Sscanf(sub.Timestamp, "%d", &ts)
+		ts, parseErr := strconv.ParseInt(sub.Timestamp, 10, 64)
+		if parseErr != nil {
+			continue
+		}
 		if sameDay(time.Unix(ts, 0).UTC(), date) {
 			todaysSubs = append(todaysSubs, sub)
 		}
@@ -57,9 +65,6 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 	var activities []ActivityData
 
 	for _, sub := range todaysSubs {
-		var ts int64
-		fmt.Sscanf(sub.Timestamp, "%d", &ts)
-
 		activities = append(activities, ActivityData{
 			Platform:     "leetcode",
 			Date:         date,
@@ -74,10 +79,90 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 		})
 	}
 
+	fallbackCount := submissionCountForDay - len(todaysSubs)
+	if fallbackCount > 0 {
+		activities = append(activities, ActivityData{
+			Platform:     "leetcode",
+			Date:         date,
+			ActivityType: "submission_count",
+			Metadata: map[string]interface{}{
+				"submission_count": fallbackCount,
+				"status":           "Accepted",
+				"difficulty":       "unknown",
+				"source":           "submission_calendar",
+			},
+		})
+	}
+
 	// pretty, _ := json.MarshalIndent(activities, "", "  ")
 	// fmt.Println(string(pretty))
 
 	return activities, nil
+}
+
+func (l *LeetcodeCollector) fetchSubmissionCountForDate(handle string, date time.Time) (int, error) {
+	query := map[string]interface{}{
+		"query": `
+			query userCalendar($username: String!) {
+				matchedUser(username: $username) {
+					userCalendar {
+						submissionCalendar
+					}
+				}
+			}
+		`,
+		"variables": map[string]string{"username": handle},
+	}
+
+	body, _ := json.Marshal(query)
+	req, _ := http.NewRequest("POST", l.endpoint, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Referer", "https://leetcode.com")
+
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("leetcode calendar request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var lcResp struct {
+		Data struct {
+			MatchedUser *struct {
+				UserCalendar struct {
+					SubmissionCalendar string `json:"submissionCalendar"`
+				} `json:"userCalendar"`
+			} `json:"matchedUser"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&lcResp); err != nil {
+		return 0, fmt.Errorf("failed to decode calendar response: %w", err)
+	}
+	if lcResp.Data.MatchedUser == nil {
+		return 0, nil
+	}
+
+	raw := lcResp.Data.MatchedUser.UserCalendar.SubmissionCalendar
+	if raw == "" {
+		return 0, nil
+	}
+
+	byEpoch := map[string]int{}
+	if err := json.Unmarshal([]byte(raw), &byEpoch); err != nil {
+		return 0, fmt.Errorf("failed to decode submissionCalendar: %w", err)
+	}
+
+	total := 0
+	for epoch, count := range byEpoch {
+		ts, parseErr := strconv.ParseInt(epoch, 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		if sameDay(time.Unix(ts, 0).UTC(), date) {
+			total += count
+		}
+	}
+
+	return total, nil
 }
 
 func (l *LeetcodeCollector) fetchSubmissionsandSnapshot(handle string) ([]lcRecentSubmission, error) {

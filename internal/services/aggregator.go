@@ -232,6 +232,12 @@ func buildMetricFromActivities(userID uuid.UUID, date time.Time, activities []co
 			metric.GithubCommits += extractInt(activity.Metadata["commit_count"])
 
 		case "leetcode":
+			submissionCount := extractInt(activity.Metadata["submission_count"])
+			if submissionCount > 0 {
+				metric.LcEasySolved += submissionCount
+				continue
+			}
+
 			if !strings.EqualFold(extractString(activity.Metadata["status"]), "accepted") {
 				continue
 			}
