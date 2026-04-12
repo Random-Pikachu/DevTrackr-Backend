@@ -362,13 +362,22 @@ func (h *UserHandler) AggregateUserRange(w http.ResponseWriter, r *http.Request)
 		Date   string             `json:"date"`
 		Metric models.DailyMetric `json:"metric"`
 	}
+	type failedDay struct {
+		Date  string `json:"date"`
+		Error string `json:"error"`
+	}
 
 	results := make([]dayResult, 0)
+	failed := make([]failedDay, 0)
 	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
 		metric, err := h.aggregateUserForDate(r.Context(), user, day)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+			failed = append(failed, failedDay{
+				Date:  day.Format("2006-01-02"),
+				Error: err.Error(),
+			})
+			log.Printf("user bulk aggregation skipped user_id=%s date=%s error=%v", userID, day.Format("2006-01-02"), err)
+			continue
 		}
 
 		results = append(results, dayResult{
@@ -377,20 +386,28 @@ func (h *UserHandler) AggregateUserRange(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	log.Printf("user bulk aggregation complete user_id=%s start=%s end=%s days=%d",
+	status := "bulk_aggregation_complete"
+	if len(failed) > 0 {
+		status = "bulk_aggregation_partial"
+	}
+
+	log.Printf("user bulk aggregation complete user_id=%s start=%s end=%s days_processed=%d days_failed=%d",
 		userID,
 		startDate.Format("2006-01-02"),
 		endDate.Format("2006-01-02"),
 		len(results),
+		len(failed),
 	)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":         "bulk_aggregation_complete",
+		"status":         status,
 		"user_id":        userID,
 		"start":          startDate.Format("2006-01-02"),
 		"end":            endDate.Format("2006-01-02"),
 		"days_processed": len(results),
+		"days_failed":    len(failed),
 		"results":        results,
+		"failed_dates":   failed,
 	})
 }
 

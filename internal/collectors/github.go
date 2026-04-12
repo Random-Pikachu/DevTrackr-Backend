@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -28,27 +29,16 @@ func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]A
 	normalizedDate := date.UTC().Truncate(24 * time.Hour)
 
 	searchActivities, searchErr := g.fetchDailyActivityByCommitSearch(handle, normalizedDate)
-	if searchErr == nil && len(searchActivities) > 0 {
+	if searchErr == nil {
 		return searchActivities, nil
 	}
 
 	eventActivities, eventErr := g.fetchDailyActivityFromEvents(handle, normalizedDate)
 	if eventErr == nil {
-		if len(eventActivities) > 0 {
-			return eventActivities, nil
-		}
-		if searchErr == nil {
-			return nil, nil
-		}
+		return eventActivities, nil
 	}
 
-	if searchErr != nil && eventErr != nil {
-		return nil, fmt.Errorf("github commit-search failed: %v; events fallback failed: %w", searchErr, eventErr)
-	}
-	if searchErr != nil {
-		return nil, searchErr
-	}
-	return nil, eventErr
+	return nil, fmt.Errorf("github commit-search failed: %v; events fallback failed: %w", searchErr, eventErr)
 }
 
 func (g *GitHubCollector) fetchDailyActivityByCommitSearch(handle string, date time.Time) ([]ActivityData, error) {
@@ -221,6 +211,14 @@ func (g *GitHubCollector) fetchDailyActivityFromEvents(handle string, date time.
 		// )
 
 		if resp.StatusCode != http.StatusOK {
+			if resp.StatusCode == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(string(body)), "pagination is limited") {
+				log.Printf("github events pagination limit reached handle=%s date=%s page=%d; stopping fallback scan",
+					handle,
+					date.Format("2006-01-02"),
+					page,
+				)
+				break
+			}
 			return nil, fmt.Errorf("github request failed with status %d: %s", resp.StatusCode, string(body))
 		}
 
