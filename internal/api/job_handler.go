@@ -65,6 +65,51 @@ func (h *JobHandler) RunNightly(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *JobHandler) SendDigestAllForDate(w http.ResponseWriter, r *http.Request) {
+	targetDate, err := parseDateParamOrDefault(r, "date", time.Now().In(istLocation))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+		return
+	}
+
+	if err := h.scheduler.RunNightlyJob(r.Context(), targetDate); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("manual digest-all complete date=%s", targetDate.Format("2006-01-02"))
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "digest_all_processed",
+		"date":   targetDate.Format("2006-01-02"),
+	})
+}
+
+func (h *JobHandler) SendDigestUserForDate(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	targetDate, err := parseDateParamOrDefault(r, "date", time.Now().In(istLocation))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+		return
+	}
+
+	if err := h.scheduler.SendDigestNowForUser(r.Context(), userID, targetDate); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("manual digest-user complete user_id=%s date=%s", userID, targetDate.Format("2006-01-02"))
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "digest_user_processed",
+		"date":    targetDate.Format("2006-01-02"),
+		"user_id": userID,
+	})
+}
+
 func (h *JobHandler) RunAggregationBackfill2026(w http.ResponseWriter, r *http.Request) {
 	startDate := normalizeDateToISTDayUTC(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
 	endDate := normalizeDateToISTDayUTC(time.Now().In(istLocation))

@@ -55,6 +55,8 @@ func NewRouter(
 	mux.HandleFunc("POST /jobs/aggregate", jobHandler.RunAggregation)
 	mux.HandleFunc("POST /jobs/aggregate/backfill-2026", jobHandler.RunAggregationBackfill2026)
 	mux.HandleFunc("POST /jobs/nightly", jobHandler.RunNightly)
+	mux.HandleFunc("POST /jobs/digest", jobHandler.SendDigestAllForDate)
+	mux.HandleFunc("POST /jobs/digest/{id}", jobHandler.SendDigestUserForDate)
 
 	return mux
 }

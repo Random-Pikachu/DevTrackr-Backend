@@ -34,28 +34,57 @@ func (s *DigestService) BuildDailyDigestHTML(
 	html := fmt.Sprintf(`
 <!doctype html>
 <html>
-  <body style="font-family: Arial, sans-serif; color: #1f2937; background: #f7fafc; margin: 0; padding: 24px;">
-    <div style="max-width: 640px; margin: 0 auto; background: white; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px;">
-      <h2 style="margin-top: 0;">Daily Digest for %s</h2>
-      <p style="margin-bottom: 24px;">Hi %s, here is your coding activity snapshot.</p>
+	<body style="margin:0; padding:24px; background:#000000; color:#ffffff; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+		<div style="max-width:640px; margin:0 auto; border:1px solid rgba(255,255,255,0.12); border-radius:16px; background:#050505; overflow:hidden;">
+			<div style="padding:20px 24px; border-bottom:1px solid rgba(255,255,255,0.10);">
+				<p style="margin:0 0 8px 0; font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:rgba(255,255,255,0.55);">
+					DevTrackr Daily Digest
+				</p>
+				<h2 style="margin:0; font-size:24px; line-height:1.25; color:#ffffff;">Daily Digest for %s</h2>
+				<p style="margin:10px 0 0 0; font-size:14px; line-height:1.6; color:rgba(255,255,255,0.70);">
+					Hi %s, here is your coding activity snapshot.
+				</p>
+			</div>
 
-      <table style="width: 100%%; border-collapse: collapse;">
-        <tr><td style="padding: 8px 0;">GitHub Commits</td><td style="padding: 8px 0; text-align: right;"><strong>%d</strong></td></tr>
-        <tr><td style="padding: 8px 0;">LeetCode Easy Solved</td><td style="padding: 8px 0; text-align: right;"><strong>%d</strong></td></tr>
-        <tr><td style="padding: 8px 0;">LeetCode Medium Solved</td><td style="padding: 8px 0; text-align: right;"><strong>%d</strong></td></tr>
-        <tr><td style="padding: 8px 0;">LeetCode Hard Solved</td><td style="padding: 8px 0; text-align: right;"><strong>%d</strong></td></tr>
-        <tr><td style="padding: 8px 0;">Codeforces Problems Solved</td><td style="padding: 8px 0; text-align: right;"><strong>%d</strong></td></tr>
-      </table>
+			<div style="padding:18px 24px;">
+				<table role="presentation" style="width:100%%; border-collapse:collapse;">
+					<tr>
+						<td style="padding:10px 0; font-size:14px; color:rgba(255,255,255,0.78); border-bottom:1px solid rgba(255,255,255,0.08);">GitHub Commits</td>
+						<td style="padding:10px 0; text-align:right; font-size:14px; color:#ffffff; border-bottom:1px solid rgba(255,255,255,0.08);"><strong>%d</strong></td>
+					</tr>
+					<tr>
+						<td style="padding:10px 0; font-size:14px; color:rgba(255,255,255,0.78); border-bottom:1px solid rgba(255,255,255,0.08);">LeetCode Easy Solved</td>
+						<td style="padding:10px 0; text-align:right; font-size:14px; color:#ffffff; border-bottom:1px solid rgba(255,255,255,0.08);"><strong>%d</strong></td>
+					</tr>
+					<tr>
+						<td style="padding:10px 0; font-size:14px; color:rgba(255,255,255,0.78); border-bottom:1px solid rgba(255,255,255,0.08);">LeetCode Medium Solved</td>
+						<td style="padding:10px 0; text-align:right; font-size:14px; color:#ffffff; border-bottom:1px solid rgba(255,255,255,0.08);"><strong>%d</strong></td>
+					</tr>
+					<tr>
+						<td style="padding:10px 0; font-size:14px; color:rgba(255,255,255,0.78); border-bottom:1px solid rgba(255,255,255,0.08);">LeetCode Hard Solved</td>
+						<td style="padding:10px 0; text-align:right; font-size:14px; color:#ffffff; border-bottom:1px solid rgba(255,255,255,0.08);"><strong>%d</strong></td>
+					</tr>
+					<tr>
+						<td style="padding:10px 0; font-size:14px; color:rgba(255,255,255,0.78);">Codeforces Problems Solved</td>
+						<td style="padding:10px 0; text-align:right; font-size:14px; color:#ffffff;"><strong>%d</strong></td>
+					</tr>
+				</table>
 
-      <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
-      <p style="margin: 8px 0;"><strong>Total problems solved today:</strong> %d</p>
-      <p style="margin: 8px 0;"><strong>Streak:</strong> %s</p>
+				<div style="margin-top:18px; border:1px solid rgba(255,255,255,0.10); border-radius:12px; background:#0b0b0b; padding:14px 16px;">
+					<p style="margin:0 0 8px 0; font-size:14px; color:#ffffff;">
+						<strong>Total problems solved today:</strong> %d
+					</p>
+					<p style="margin:0; font-size:14px; color:rgba(255,255,255,0.82);">
+						<strong>Streak:</strong> %s
+					</p>
+				</div>
+			</div>
     </div>
   </body>
 </html>
 `,
 		dateLabel,
-		displayNameFromEmail(user.Email),
+		displayNameForDigest(user),
 		metric.GithubCommits,
 		metric.LcEasySolved,
 		metric.LcMediumSolved,
@@ -68,7 +97,17 @@ func (s *DigestService) BuildDailyDigestHTML(
 	return subject, html
 }
 
-func displayNameFromEmail(email string) string {
+func displayNameForDigest(user models.User) string {
+	if user.Username.Valid {
+		username := strings.TrimSpace(user.Username.String)
+		if username != "" {
+			runes := []rune(username)
+			runes[0] = unicode.ToUpper(runes[0])
+			return string(runes)
+		}
+	}
+
+	email := user.Email
 	localPart := email
 	if idx := strings.Index(email, "@"); idx > 0 {
 		localPart = email[:idx]
