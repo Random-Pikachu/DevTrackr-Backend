@@ -53,6 +53,7 @@ func NewRouter(
 	mux.HandleFunc("DELETE /integrations/{id}", integrationHandler.DeactivateIntegration)
 
 	mux.HandleFunc("POST /jobs/aggregate", jobHandler.RunAggregation)
+	mux.HandleFunc("POST /jobs/aggregate/backfill-2026", jobHandler.RunAggregationBackfill2026)
 	mux.HandleFunc("POST /jobs/nightly", jobHandler.RunNightly)
 
 	return mux
