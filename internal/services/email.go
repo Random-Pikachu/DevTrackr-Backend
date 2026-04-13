@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,9 @@ type EmailService struct {
 	from      string
 	client    *http.Client
 	resendURL string
+
+	resendMu     sync.Mutex
+	lastResendAt time.Time
 }
 
 func NewEmailService(provider string, apiKey string, from string) *EmailService {
@@ -74,22 +78,35 @@ func (s *EmailService) sendViaResend(ctx context.Context, to string, subject str
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.resendURL, bytes.NewBuffer(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	var respBody []byte
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.waitForResendSlot(ctx); err != nil {
+			return "", err
+		}
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.resendURL, bytes.NewBuffer(body))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+s.apiKey)
+		req.Header.Set("Content-Type", "application/json")
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("resend request failed with status %d: %s", resp.StatusCode, string(respBody))
+		resp, err := s.client.Do(req)
+		if err != nil {
+			return "", err
+		}
+
+		respBody, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt == 0 {
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("resend request failed with status %d: %s", resp.StatusCode, string(respBody))
+		}
+		break
 	}
 
 	var parsed struct {
@@ -100,4 +117,25 @@ func (s *EmailService) sendViaResend(ctx context.Context, to string, subject str
 		return parsed.ID, nil
 	}
 	return fmt.Sprintf("resend-%d", time.Now().Unix()), nil
+}
+
+func (s *EmailService) waitForResendSlot(ctx context.Context) error {
+	const minGap = 500 * time.Millisecond
+
+	s.resendMu.Lock()
+	defer s.resendMu.Unlock()
+
+	wait := s.lastResendAt.Add(minGap).Sub(time.Now())
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+
+	s.lastResendAt = time.Now()
+	return nil
 }

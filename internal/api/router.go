@@ -48,6 +48,7 @@ func NewRouter(
 	mux.HandleFunc("GET /users/{id}/metrics", userHandler.GetDailyMetric)
 	mux.HandleFunc("GET /users/{id}/metrics/range", userHandler.GetMetricRange)
 	mux.HandleFunc("GET /users/{id}/heatmap", userHandler.GetHeatmap)
+	mux.HandleFunc("DELETE /users/{id}/activities&dmetrics", userHandler.DeleteActivitiesAndMetrics)
 
 	mux.HandleFunc("POST /integrations", integrationHandler.AddIntegration)
 	mux.HandleFunc("DELETE /integrations/{id}", integrationHandler.DeactivateIntegration)

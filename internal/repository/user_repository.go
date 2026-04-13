@@ -336,3 +336,43 @@ func (r *UserRepository) GetAllUsers(ctx context.Context) ([]models.User, error)
 
 	return users, nil
 }
+
+func (r *UserRepository) DeleteActivitiesAndMetricsByUserID(ctx context.Context, userID string) (int64, int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+
+	activitiesResult, err := tx.ExecContext(ctx, `
+		DELETE FROM activities
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	activitiesDeleted, err := activitiesResult.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	metricsResult, err := tx.ExecContext(ctx, `
+		DELETE FROM daily_metrics
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	metricsDeleted, err := metricsResult.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+
+	return activitiesDeleted, metricsDeleted, nil
+}

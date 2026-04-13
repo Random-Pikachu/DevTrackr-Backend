@@ -608,6 +608,28 @@ func (h *UserHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
 	log.Printf("heatmap fetched user_id=%s start=%s end=%s source_metrics=%d days=%d", userID, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), len(metrics), len(series))
 }
 
+func (h *UserHandler) DeleteActivitiesAndMetrics(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user id is required")
+		return
+	}
+
+	activitiesDeleted, metricsDeleted, err := h.userRepo.DeleteActivitiesAndMetricsByUserID(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("user data deleted user_id=%s activities_deleted=%d metrics_deleted=%d", userID, activitiesDeleted, metricsDeleted)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":             "deleted",
+		"user_id":            userID,
+		"activities_deleted": activitiesDeleted,
+		"metrics_deleted":    metricsDeleted,
+	})
+}
+
 func toNullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
 }
