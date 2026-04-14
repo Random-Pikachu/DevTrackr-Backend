@@ -52,7 +52,7 @@ func (l *LeetcodeCollector) FetchDailyActivity(handle string, date time.Time) ([
 		if parseErr != nil {
 			continue
 		}
-		if sameDay(time.Unix(ts, 0).UTC(), date) {
+		if sameLeetcodeDay(time.Unix(ts, 0), date) {
 			todaysSubs = append(todaysSubs, sub)
 		}
 	}
@@ -157,12 +157,18 @@ func (l *LeetcodeCollector) fetchSubmissionCountForDate(handle string, date time
 		if parseErr != nil {
 			continue
 		}
-		if sameDay(time.Unix(ts, 0).UTC(), date) {
+		if sameLeetcodeDay(time.Unix(ts, 0), date) {
 			total += count
 		}
 	}
 
 	return total, nil
+}
+
+func sameLeetcodeDay(a, b time.Time) bool {
+	ay, am, ad := a.UTC().Date()
+	by, bm, bd := b.UTC().Date()
+	return ay == by && am == bm && ad == bd
 }
 
 func (l *LeetcodeCollector) fetchSubmissionsandSnapshot(handle string) ([]lcRecentSubmission, error) {
