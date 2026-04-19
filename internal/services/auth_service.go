@@ -139,7 +139,7 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 			Email:          profile.Email,
 			EmailFrequency: "daily",
 			Timezone:       defaultDigestTimezone,
-			DigestTime:     "22:00",
+			DigestTime:     "23:30",
 			EmailOptIn:     true,
 			ProfilePublic:  false,
 		})
@@ -192,7 +192,7 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, email string, pa
 		Email:          email,
 		EmailFrequency: "daily",
 		Timezone:       defaultDigestTimezone,
-		DigestTime:     "22:00",
+		DigestTime:     "23:30",
 		EmailOptIn:     true,
 		ProfilePublic:  false,
 	})

@@ -255,7 +255,7 @@ func isUserDueAt(user models.User, nowUTC time.Time) (bool, time.Time, error) {
 
 	digestTime := user.DigestTime
 	if digestTime == "" {
-		digestTime = "22:00"
+		digestTime = "23:30"
 	}
 	digestClock, err := time.Parse("15:04", digestTime)
 	if err != nil {
