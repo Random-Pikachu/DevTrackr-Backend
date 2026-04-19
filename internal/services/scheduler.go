@@ -29,13 +29,14 @@ type SchedulerEmailRepository interface {
 }
 
 type SchedulerService struct {
-	aggregator AggregatorRunner
-	digest     *DigestService
-	email      EmailSender
-	userRepo   SchedulerUserRepository
-	metricRepo SchedulerMetricRepository
-	emailRepo  SchedulerEmailRepository
-	logger     *log.Logger
+	aggregator                  AggregatorRunner
+	digest                      *DigestService
+	email                       EmailSender
+	userRepo                    SchedulerUserRepository
+	metricRepo                  SchedulerMetricRepository
+	emailRepo                   SchedulerEmailRepository
+	logger                      *log.Logger
+	lastEndOfDayAggregationDate time.Time
 }
 
 type AggregatorRunner interface {
@@ -199,11 +200,36 @@ func (s *SchedulerService) Start(ctx context.Context, tickInterval time.Duration
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-ticker.C:
-			if err := s.RunDueDigests(ctx, now.UTC()); err != nil {
-				s.logger.Printf("due-digests tick failed at %s: %v", now.UTC().Format(time.RFC3339), err)
+			nowUTC := now.UTC()
+			if err := s.RunDueDigests(ctx, nowUTC); err != nil {
+				s.logger.Printf("due-digests tick failed at %s: %v", nowUTC.Format(time.RFC3339), err)
+			}
+
+			if err := s.runEndOfDayAggregationIfDue(ctx, nowUTC); err != nil {
+				s.logger.Printf("end-of-day aggregation tick failed at %s: %v", nowUTC.Format(time.RFC3339), err)
 			}
 		}
 	}
+}
+
+func (s *SchedulerService) runEndOfDayAggregationIfDue(ctx context.Context, nowUTC time.Time) error {
+	localNow := nowUTC.In(istLocation)
+	if localNow.Hour() != 23 || localNow.Minute() != 59 {
+		return nil
+	}
+
+	targetDate := normalizeDateToISTDayUTC(localNow)
+	if !s.lastEndOfDayAggregationDate.IsZero() && s.lastEndOfDayAggregationDate.Equal(targetDate) {
+		return nil
+	}
+
+	if err := s.aggregator.RunDailyAggregation(ctx, targetDate); err != nil {
+		return fmt.Errorf("failed for date %s: %w", targetDate.Format("2006-01-02"), err)
+	}
+
+	s.lastEndOfDayAggregationDate = targetDate
+	s.logger.Printf("end-of-day aggregation completed date=%s", targetDate.Format("2006-01-02"))
+	return nil
 }
 
 func isNotFoundError(err error) bool {

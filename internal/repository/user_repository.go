@@ -10,6 +10,7 @@ import (
 )
 
 var ErrUsernameTaken = errors.New("username already taken")
+var ErrEmailTaken = errors.New("email already taken")
 
 type UserRepository struct {
 	db *sql.DB
@@ -45,6 +46,12 @@ func (r *UserRepository) CreateUser(ctx context.Context, user models.User) (mode
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			if pqErr.Constraint == "users_email_key" {
+				return models.User{}, ErrEmailTaken
+			}
+			if pqErr.Constraint == "users_username_key" || pqErr.Constraint == "idx_users_username_unique" {
+				return models.User{}, ErrUsernameTaken
+			}
 			return models.User{}, ErrUsernameTaken
 		}
 		return models.User{}, err
@@ -149,6 +156,44 @@ func (r *UserRepository) GetUserByUsername(ctx context.Context, username string)
 	return user, nil
 }
 
+func (r *UserRepository) GetUserAuthByUsername(ctx context.Context, username string) (models.User, string, error) {
+	query := `
+        SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug, password_hash
+        FROM users
+        WHERE username = $1
+    `
+
+	var user models.User
+	var passwordHash sql.NullString
+	err := r.db.QueryRowContext(ctx, query, username).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.EmailFrequency,
+		&user.Timezone,
+		&user.DigestTime,
+		&user.EmailOptIn,
+		&user.ProfilePublic,
+		&user.GithubHandle,
+		&user.LeetcodeHandle,
+		&user.CodeforcesHandle,
+		&user.PublicSlug,
+		&passwordHash,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.User{}, "", errors.New("user not found")
+		}
+		return models.User{}, "", err
+	}
+
+	if !passwordHash.Valid || passwordHash.String == "" {
+		return models.User{}, "", errors.New("password not set")
+	}
+
+	return user, passwordHash.String, nil
+}
+
 func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, digestTime string) error {
 	query := `
 		UPDATE users
@@ -196,6 +241,26 @@ func (r *UserRepository) UpdateGithubHandle(ctx context.Context, userId string, 
 		WHERE id = $2
 	`
 	result, err := r.db.ExecContext(ctx, query, githubHandle, userId)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("User not found")
+	}
+	return nil
+}
+
+func (r *UserRepository) SetPasswordHash(ctx context.Context, userId string, passwordHash string) error {
+	query := `
+		UPDATE users
+		SET password_hash = $1, updated_at = NOW()
+		WHERE id = $2
+	`
+	result, err := r.db.ExecContext(ctx, query, passwordHash, userId)
 	if err != nil {
 		return err
 	}

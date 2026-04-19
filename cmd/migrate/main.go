@@ -47,6 +47,9 @@ func main() {
 	ALTER TABLE users
 	ADD COLUMN IF NOT EXISTS username VARCHAR(255);
 
+	ALTER TABLE users
+	ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique
 		ON users(username);
 

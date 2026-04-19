@@ -15,15 +15,21 @@ import (
 	"time"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )
 
 type AuthUserRepository interface {
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
+	GetUserAuthByUsername(ctx context.Context, username string) (models.User, string, error)
 	CreateUser(ctx context.Context, user models.User) (models.User, error)
 	UpdateGithubHandle(ctx context.Context, userId string, githubHandle string) error
+	SetPasswordHash(ctx context.Context, userId string, passwordHash string) error
 }
+
+var ErrInvalidCredentials = errors.New("invalid username or password")
 
 type AuthIntegrationRepository interface {
 	UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error)
@@ -65,6 +71,10 @@ func (s *AuthService) IsConfigured() bool {
 		s.oauthConfig.ClientSecret != "" &&
 		s.oauthConfig.RedirectURL != "" &&
 		s.tokenSecret != ""
+}
+
+func (s *AuthService) isTokenConfigured() bool {
+	return s.tokenSecret != ""
 }
 
 func (s *AuthService) GetGitHubAuthURL(state string) string {
@@ -131,6 +141,72 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 	}
 
 	return user, authToken, isNewUser, nil
+}
+
+func (s *AuthService) RegisterWithPassword(ctx context.Context, username string, email string, password string) (models.User, string, error) {
+	if !s.isTokenConfigured() {
+		return models.User{}, "", errors.New("token secret not configured")
+	}
+
+	if _, err := s.userRepo.GetUserByEmail(ctx, email); err == nil {
+		return models.User{}, "", repository.ErrEmailTaken
+	} else if !isUserNotFoundErr(err) {
+		return models.User{}, "", err
+	}
+
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return models.User{}, "", fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	createdUser, err := s.userRepo.CreateUser(ctx, models.User{
+		Username:       sql.NullString{String: username, Valid: true},
+		Email:          email,
+		EmailFrequency: "daily",
+		Timezone:       defaultDigestTimezone,
+		DigestTime:     "22:00",
+		EmailOptIn:     true,
+		ProfilePublic:  false,
+	})
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	if err := s.userRepo.SetPasswordHash(ctx, createdUser.ID.String(), string(passwordHashBytes)); err != nil {
+		return models.User{}, "", err
+	}
+
+	authToken, err := s.generateSignedToken(createdUser)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	return createdUser, authToken, nil
+}
+
+func (s *AuthService) LoginWithPassword(ctx context.Context, username string, password string) (models.User, string, error) {
+	if !s.isTokenConfigured() {
+		return models.User{}, "", errors.New("token secret not configured")
+	}
+
+	user, passwordHash, err := s.userRepo.GetUserAuthByUsername(ctx, username)
+	if err != nil {
+		if isUserNotFoundErr(err) || strings.Contains(strings.ToLower(err.Error()), "password not set") {
+			return models.User{}, "", ErrInvalidCredentials
+		}
+		return models.User{}, "", err
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+		return models.User{}, "", ErrInvalidCredentials
+	}
+
+	authToken, err := s.generateSignedToken(user)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	return user, authToken, nil
 }
 
 type githubProfile struct {
@@ -239,4 +315,11 @@ func (s *AuthService) generateSignedToken(user models.User) (string, error) {
 	encodedSig := base64.RawURLEncoding.EncodeToString(signature)
 
 	return encodedPayload + "." + encodedSig, nil
+}
+
+func isUserNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }

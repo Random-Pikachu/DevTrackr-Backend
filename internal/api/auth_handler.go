@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
@@ -44,6 +46,96 @@ func (h *AuthHandler) GitHubLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	http.Redirect(w, r, h.authService.GetGitHubAuthURL(state), http.StatusTemporaryRedirect)
+}
+
+func (h *AuthHandler) RegisterWithPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Email = strings.TrimSpace(req.Email)
+	req.Username = strings.TrimSpace(req.Username)
+
+	if req.Email == "" || req.Username == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "email, username and password are required")
+		return
+	}
+	if len(req.Password) < 8 {
+		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+
+	user, token, err := h.authService.RegisterWithPassword(r.Context(), req.Username, req.Email, req.Password)
+	if err != nil {
+		switch err {
+		case repository.ErrEmailTaken:
+			writeError(w, http.StatusConflict, "email already taken")
+			return
+		case repository.ErrUsernameTaken:
+			writeError(w, http.StatusConflict, "username already taken")
+			return
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "devtrackr_auth",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Now().Add(24 * time.Hour),
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"token": token, "user": user, "is_new_user": true})
+}
+
+func (h *AuthHandler) LoginWithPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "username and password are required")
+		return
+	}
+
+	user, token, err := h.authService.LoginWithPassword(r.Context(), req.Username, req.Password)
+	if err != nil {
+		if err == services.ErrInvalidCredentials {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "devtrackr_auth",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Now().Add(24 * time.Hour),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "user": user, "is_new_user": false})
 }
 
 func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
