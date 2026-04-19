@@ -33,6 +33,7 @@ func main() {
 	activityRepo := repository.NewActivityRepository(db)
 	metricRepo := repository.NewMetricRepository(db)
 	emailRepo := repository.NewEmailRepository(db)
+	authCodeRepo := repository.NewAuthCodeRepository(db)
 
 	aggregatorService := services.NewAggregatorService(userRepo, integrationRepo, activityRepo, metricRepo, log.Default())
 	digestService := services.NewDigestService()
@@ -40,6 +41,8 @@ func main() {
 	authService := services.NewAuthService(
 		userRepo,
 		integrationRepo,
+		authCodeRepo,
+		emailService,
 		os.Getenv("GITHUB_CLIENT_ID"),
 		os.Getenv("GITHUB_CLIENT_SECRET"),
 		os.Getenv("GITHUB_REDIRECT_URL"),

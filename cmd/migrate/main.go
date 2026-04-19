@@ -99,6 +99,18 @@ func main() {
 		sent_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS auth_codes (
+		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+		user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+		email VARCHAR(255) NOT NULL,
+		purpose VARCHAR(50) NOT NULL,
+		code_hash VARCHAR(255) NOT NULL,
+		attempts INT NOT NULL DEFAULT 0,
+		expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+		used_at TIMESTAMP WITH TIME ZONE,
+		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_activities_user_date
     ON activities(user_id, activity_date);
 
@@ -107,6 +119,12 @@ func main() {
 
 	CREATE INDEX IF NOT EXISTS idx_integrations_user
 		ON integrations(user_id);
+
+	CREATE INDEX IF NOT EXISTS idx_auth_codes_email_purpose
+		ON auth_codes(email, purpose, created_at DESC);
+
+	CREATE INDEX IF NOT EXISTS idx_auth_codes_user
+		ON auth_codes(user_id);
 	`
 
 	_, err := db.Exec(schema)

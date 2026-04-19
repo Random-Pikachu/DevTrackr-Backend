@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -10,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -24,20 +26,43 @@ import (
 type AuthUserRepository interface {
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
 	GetUserAuthByUsername(ctx context.Context, username string) (models.User, string, error)
+	GetUserAuthByIdentifier(ctx context.Context, identifier string) (models.User, string, error)
+	IsPasswordSet(ctx context.Context, userID string) (bool, error)
 	CreateUser(ctx context.Context, user models.User) (models.User, error)
+	UpdateUsername(ctx context.Context, userId string, username string) error
 	UpdateGithubHandle(ctx context.Context, userId string, githubHandle string) error
 	SetPasswordHash(ctx context.Context, userId string, passwordHash string) error
 }
 
 var ErrInvalidCredentials = errors.New("invalid username or password")
+var ErrInvalidVerificationCode = errors.New("invalid verification code")
+var ErrVerificationCodeExpired = errors.New("verification code expired")
+
+const (
+	authPurposePasswordSetup = "password_setup"
+	authPurposePasswordReset = "password_reset"
+	authCodeLength           = 6
+	authCodeExpiryMinutes    = 15
+	authCodeMaxAttempts      = 5
+)
 
 type AuthIntegrationRepository interface {
 	UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error)
 }
 
+type AuthCodeRepository interface {
+	CreateAuthCode(ctx context.Context, authCode models.AuthCode) (models.AuthCode, error)
+	GetLatestActiveAuthCode(ctx context.Context, email string, purpose string) (models.AuthCode, error)
+	MarkAuthCodeUsed(ctx context.Context, authCodeID string) error
+	IncrementAuthCodeAttempts(ctx context.Context, authCodeID string) error
+	InvalidateActiveAuthCodes(ctx context.Context, email string, purpose string) error
+}
+
 type AuthService struct {
 	userRepo        AuthUserRepository
 	integrationRepo AuthIntegrationRepository
+	authCodeRepo    AuthCodeRepository
+	emailSender     EmailSender
 	oauthConfig     *oauth2.Config
 	httpClient      *http.Client
 	tokenSecret     string
@@ -46,6 +71,8 @@ type AuthService struct {
 func NewAuthService(
 	userRepo AuthUserRepository,
 	integrationRepo AuthIntegrationRepository,
+	authCodeRepo AuthCodeRepository,
+	emailSender EmailSender,
 	clientID string,
 	clientSecret string,
 	redirectURL string,
@@ -54,6 +81,8 @@ func NewAuthService(
 	return &AuthService{
 		userRepo:        userRepo,
 		integrationRepo: integrationRepo,
+		authCodeRepo:    authCodeRepo,
+		emailSender:     emailSender,
 		oauthConfig: &oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -143,7 +172,7 @@ func (s *AuthService) HandleGitHubCallback(ctx context.Context, code string) (mo
 	return user, authToken, isNewUser, nil
 }
 
-func (s *AuthService) RegisterWithPassword(ctx context.Context, username string, email string, password string) (models.User, string, error) {
+func (s *AuthService) RegisterWithPassword(ctx context.Context, email string, password string) (models.User, string, error) {
 	if !s.isTokenConfigured() {
 		return models.User{}, "", errors.New("token secret not configured")
 	}
@@ -160,7 +189,6 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, username string,
 	}
 
 	createdUser, err := s.userRepo.CreateUser(ctx, models.User{
-		Username:       sql.NullString{String: username, Valid: true},
 		Email:          email,
 		EmailFrequency: "daily",
 		Timezone:       defaultDigestTimezone,
@@ -184,12 +212,12 @@ func (s *AuthService) RegisterWithPassword(ctx context.Context, username string,
 	return createdUser, authToken, nil
 }
 
-func (s *AuthService) LoginWithPassword(ctx context.Context, username string, password string) (models.User, string, error) {
+func (s *AuthService) LoginWithPassword(ctx context.Context, identifier string, password string) (models.User, string, error) {
 	if !s.isTokenConfigured() {
 		return models.User{}, "", errors.New("token secret not configured")
 	}
 
-	user, passwordHash, err := s.userRepo.GetUserAuthByUsername(ctx, username)
+	user, passwordHash, err := s.userRepo.GetUserAuthByIdentifier(ctx, identifier)
 	if err != nil {
 		if isUserNotFoundErr(err) || strings.Contains(strings.ToLower(err.Error()), "password not set") {
 			return models.User{}, "", ErrInvalidCredentials
@@ -207,6 +235,203 @@ func (s *AuthService) LoginWithPassword(ctx context.Context, username string, pa
 	}
 
 	return user, authToken, nil
+}
+
+func (s *AuthService) IsPasswordSet(ctx context.Context, userID string) (bool, error) {
+	return s.userRepo.IsPasswordSet(ctx, userID)
+}
+
+func (s *AuthService) RequestPasswordSetupCode(ctx context.Context, email string) error {
+	return s.requestPasswordCode(ctx, strings.TrimSpace(strings.ToLower(email)), authPurposePasswordSetup)
+}
+
+func (s *AuthService) RequestForgotPasswordCode(ctx context.Context, email string) error {
+	return s.requestPasswordCode(ctx, strings.TrimSpace(strings.ToLower(email)), authPurposePasswordReset)
+}
+
+func (s *AuthService) requestPasswordCode(ctx context.Context, email string, purpose string) error {
+	if email == "" {
+		return errors.New("email is required")
+	}
+	if s.authCodeRepo == nil {
+		return errors.New("auth code repository not configured")
+	}
+	if s.emailSender == nil {
+		return errors.New("email sender not configured")
+	}
+
+	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil {
+		if isUserNotFoundErr(err) {
+			return nil
+		}
+		return err
+	}
+
+	if err := s.authCodeRepo.InvalidateActiveAuthCodes(ctx, email, purpose); err != nil {
+		return err
+	}
+
+	code, err := generateVerificationCode(authCodeLength)
+	if err != nil {
+		return err
+	}
+
+	codeHash := s.hashAuthCode(email, purpose, code)
+	_, err = s.authCodeRepo.CreateAuthCode(ctx, models.AuthCode{
+		UserID:    user.ID,
+		Email:     email,
+		Purpose:   purpose,
+		CodeHash:  codeHash,
+		Attempts:  0,
+		ExpiresAt: time.Now().UTC().Add(authCodeExpiryMinutes * time.Minute),
+	})
+	if err != nil {
+		return err
+	}
+
+	subject := "DevTrackr verification code"
+	html := buildVerificationCodeEmailHTML(code, purpose)
+	_, err = s.emailSender.SendDigest(ctx, email, subject, html)
+	return err
+}
+
+func (s *AuthService) ConfirmPasswordSetup(ctx context.Context, email string, code string, newPassword string, username string) (models.User, string, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	username = strings.TrimSpace(username)
+	user, err := s.verifyAuthCode(ctx, email, authPurposePasswordSetup, code)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	if username != "" {
+		if err := s.userRepo.UpdateUsername(ctx, user.ID.String(), username); err != nil {
+			return models.User{}, "", err
+		}
+		user.Username = sql.NullString{String: username, Valid: true}
+	}
+
+	if err := s.setUserPassword(ctx, user.ID.String(), newPassword); err != nil {
+		return models.User{}, "", err
+	}
+
+	token, err := s.generateSignedToken(user)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	return user, token, nil
+}
+
+func (s *AuthService) ConfirmForgotPassword(ctx context.Context, email string, code string, newPassword string) (models.User, string, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	user, err := s.verifyAuthCode(ctx, email, authPurposePasswordReset, code)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	if err := s.setUserPassword(ctx, user.ID.String(), newPassword); err != nil {
+		return models.User{}, "", err
+	}
+
+	token, err := s.generateSignedToken(user)
+	if err != nil {
+		return models.User{}, "", err
+	}
+
+	return user, token, nil
+}
+
+func (s *AuthService) verifyAuthCode(ctx context.Context, email string, purpose string, code string) (models.User, error) {
+	if email == "" || strings.TrimSpace(code) == "" {
+		return models.User{}, ErrInvalidVerificationCode
+	}
+
+	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	if err != nil {
+		if isUserNotFoundErr(err) {
+			return models.User{}, ErrInvalidVerificationCode
+		}
+		return models.User{}, err
+	}
+
+	authCode, err := s.authCodeRepo.GetLatestActiveAuthCode(ctx, email, purpose)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			return models.User{}, ErrInvalidVerificationCode
+		}
+		return models.User{}, err
+	}
+
+	if time.Now().UTC().After(authCode.ExpiresAt) {
+		_ = s.authCodeRepo.MarkAuthCodeUsed(ctx, authCode.ID.String())
+		return models.User{}, ErrVerificationCodeExpired
+	}
+
+	expectedHash := s.hashAuthCode(email, purpose, strings.TrimSpace(code))
+	if !hmac.Equal([]byte(expectedHash), []byte(authCode.CodeHash)) {
+		_ = s.authCodeRepo.IncrementAuthCodeAttempts(ctx, authCode.ID.String())
+		if authCode.Attempts+1 >= authCodeMaxAttempts {
+			_ = s.authCodeRepo.MarkAuthCodeUsed(ctx, authCode.ID.String())
+		}
+		return models.User{}, ErrInvalidVerificationCode
+	}
+
+	if err := s.authCodeRepo.MarkAuthCodeUsed(ctx, authCode.ID.String()); err != nil {
+		return models.User{}, err
+	}
+
+	return user, nil
+}
+
+func (s *AuthService) setUserPassword(ctx context.Context, userID string, newPassword string) error {
+	if strings.TrimSpace(newPassword) == "" {
+		return errors.New("password is required")
+	}
+	if len(newPassword) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+
+	passwordHashBytes, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	return s.userRepo.SetPasswordHash(ctx, userID, string(passwordHashBytes))
+}
+
+func (s *AuthService) hashAuthCode(email string, purpose string, code string) string {
+	input := strings.ToLower(strings.TrimSpace(email)) + "|" + purpose + "|" + strings.TrimSpace(code)
+	mac := hmac.New(sha256.New, []byte(s.tokenSecret))
+	_, _ = mac.Write([]byte(input))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func generateVerificationCode(length int) (string, error) {
+	if length <= 0 {
+		return "", errors.New("invalid verification code length")
+	}
+
+	buf := strings.Builder{}
+	buf.Grow(length)
+	for range length {
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		buf.WriteByte(byte('0' + n.Int64()))
+	}
+
+	return buf.String(), nil
+}
+
+func buildVerificationCodeEmailHTML(code string, purpose string) string {
+	flowLabel := "password setup"
+	if purpose == authPurposePasswordReset {
+		flowLabel = "password reset"
+	}
+
+	return fmt.Sprintf("<p>Your DevTrackr %s code is:</p><h2 style=\"letter-spacing: 4px;\">%s</h2><p>This code expires in %d minutes.</p>", flowLabel, code, authCodeExpiryMinutes)
 }
 
 type githubProfile struct {

@@ -68,3 +68,15 @@ type EmailLog struct {
 	ProviderMessageID sql.NullString `json:"provider_message_id"`
 	SentAt            time.Time      `json:"sent_at"`
 }
+
+type AuthCode struct {
+	ID        uuid.UUID    `json:"id"`
+	UserID    uuid.UUID    `json:"user_id"`
+	Email     string       `json:"email"`
+	Purpose   string       `json:"purpose"`
+	CodeHash  string       `json:"-"`
+	Attempts  int          `json:"attempts"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	UsedAt    sql.NullTime `json:"used_at,omitempty"`
+	CreatedAt time.Time    `json:"created_at"`
+}

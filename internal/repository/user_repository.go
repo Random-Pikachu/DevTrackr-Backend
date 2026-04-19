@@ -194,6 +194,68 @@ func (r *UserRepository) GetUserAuthByUsername(ctx context.Context, username str
 	return user, passwordHash.String, nil
 }
 
+func (r *UserRepository) GetUserAuthByIdentifier(ctx context.Context, identifier string) (models.User, string, error) {
+	query := `
+        SELECT id, username, email, email_frequency, timezone, digest_time, email_opt_in, profile_public, github_handle, leetcode_handle, codeforces_handle, public_slug, password_hash
+        FROM users
+        WHERE username = $1 OR email = $1
+        ORDER BY CASE WHEN email = $1 THEN 0 ELSE 1 END
+        LIMIT 1
+    `
+
+	var user models.User
+	var passwordHash sql.NullString
+	err := r.db.QueryRowContext(ctx, query, identifier).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.EmailFrequency,
+		&user.Timezone,
+		&user.DigestTime,
+		&user.EmailOptIn,
+		&user.ProfilePublic,
+		&user.GithubHandle,
+		&user.LeetcodeHandle,
+		&user.CodeforcesHandle,
+		&user.PublicSlug,
+		&passwordHash,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.User{}, "", errors.New("user not found")
+		}
+		return models.User{}, "", err
+	}
+
+	if !passwordHash.Valid || passwordHash.String == "" {
+		return models.User{}, "", errors.New("password not set")
+	}
+
+	return user, passwordHash.String, nil
+}
+
+func (r *UserRepository) IsPasswordSet(ctx context.Context, userID string) (bool, error) {
+	query := `
+		SELECT CASE
+			WHEN password_hash IS NULL OR password_hash = '' THEN false
+			ELSE true
+		END
+		FROM users
+		WHERE id = $1
+	`
+
+	var passwordSet bool
+	err := r.db.QueryRowContext(ctx, query, userID).Scan(&passwordSet)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, errors.New("user not found")
+		}
+		return false, err
+	}
+
+	return passwordSet, nil
+}
+
 func (r *UserRepository) UpdateDigestTime(ctx context.Context, userId string, digestTime string) error {
 	query := `
 		UPDATE users

@@ -31,6 +31,10 @@ func NewRouter(
 	mux.HandleFunc("GET /auth/github/callback", authHandler.GitHubCallback)
 	mux.HandleFunc("POST /auth/register", authHandler.RegisterWithPassword)
 	mux.HandleFunc("POST /auth/login", authHandler.LoginWithPassword)
+	mux.HandleFunc("POST /auth/password/setup/request", authHandler.RequestPasswordSetupCode)
+	mux.HandleFunc("POST /auth/password/setup/confirm", authHandler.ConfirmPasswordSetup)
+	mux.HandleFunc("POST /auth/password/forgot/request", authHandler.RequestForgotPasswordCode)
+	mux.HandleFunc("POST /auth/password/forgot/confirm", authHandler.ConfirmForgotPassword)
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"message": "Welcome to DevTrackr API!"})
 	})
