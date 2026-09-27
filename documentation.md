@@ -70,6 +70,8 @@ Starts GitHub OAuth. This route sets a `github_oauth_state` cookie and redirects
 
 Requested scopes are `read:user`, `user:email` and `repo`. The `repo` scope lets the collector see commits in the user's private repositories. Users who authorised before `repo` was added must log in with GitHub again to grant it and refresh their stored token.
 
+Commits in organizations that restrict OAuth app access cannot be read by the collector. For those, the collector asks GitHub's GraphQL contributions API how many commits it credits the user with for the day and records the difference as a single activity labelled "Private organization repositories", with a count but no repository name or messages. GitHub only reports that restricted count when the user has enabled **Private contributions** under the contribution settings on their GitHub profile.
+
 Request sample:
 
 ```bash

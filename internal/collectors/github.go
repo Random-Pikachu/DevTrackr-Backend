@@ -1,6 +1,7 @@
 package collectors
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,20 +26,197 @@ func NewGitHubCollector(token string) *GitHubCollector {
 	}
 }
 
+// privateOrgLabel is the display label used for commits GitHub counts for the
+// user but that the token cannot read, typically private repositories in an
+// organization that restricts OAuth app access.
+const privateOrgLabel = "Private organization repositories"
+
 func (g *GitHubCollector) FetchDailyActivity(handle string, date time.Time) ([]ActivityData, error) {
 	normalizedDate := date.UTC().Truncate(24 * time.Hour)
 
-	searchActivities, searchErr := g.fetchDailyActivityByCommitSearch(handle, normalizedDate)
+	visible, visibleErr := g.fetchVisibleDailyActivity(handle, normalizedDate)
+
+	if g.token == "" {
+		return visible, visibleErr
+	}
+
+	summary, summaryErr := g.fetchContributionSummary(handle, normalizedDate)
+	if summaryErr != nil {
+		if visibleErr != nil {
+			return nil, fmt.Errorf("%v; contribution summary failed: %w", visibleErr, summaryErr)
+		}
+		log.Printf("github contribution summary unavailable handle=%s date=%s err=%v; using visible commits only",
+			handle,
+			normalizedDate.Format("2006-01-02"),
+			summaryErr,
+		)
+		return visible, nil
+	}
+
+	if visibleErr != nil {
+		log.Printf("github visible commit fetch failed handle=%s date=%s err=%v; using contribution summary only",
+			handle,
+			normalizedDate.Format("2006-01-02"),
+			visibleErr,
+		)
+		visible = nil
+	}
+
+	return mergeHiddenContributions(visible, summary, normalizedDate, handle), nil
+}
+
+// fetchVisibleDailyActivity returns per-repository commits the token can read,
+// using commit search first and the public events feed as a fallback.
+func (g *GitHubCollector) fetchVisibleDailyActivity(handle string, date time.Time) ([]ActivityData, error) {
+	searchActivities, searchErr := g.fetchDailyActivityByCommitSearch(handle, date)
 	if searchErr == nil {
 		return searchActivities, nil
 	}
 
-	eventActivities, eventErr := g.fetchDailyActivityFromEvents(handle, normalizedDate)
+	eventActivities, eventErr := g.fetchDailyActivityFromEvents(handle, date)
 	if eventErr == nil {
 		return eventActivities, nil
 	}
 
 	return nil, fmt.Errorf("github commit-search failed: %v; events fallback failed: %w", searchErr, eventErr)
+}
+
+type contributionSummary struct {
+	TotalCommitContributions     int
+	RestrictedContributionsCount int
+}
+
+// fetchContributionSummary asks GitHub's GraphQL API how many commit
+// contributions it credits the user with for the day. GitHub computes this
+// from the user's contribution graph, so it includes private repositories in
+// organizations that block the OAuth app. Those show up in
+// RestrictedContributionsCount, which is only populated when the user has
+// enabled "Private contributions" in their GitHub profile contribution settings.
+func (g *GitHubCollector) fetchContributionSummary(handle string, date time.Time) (contributionSummary, error) {
+	startIST, endIST := istDayRange(date)
+
+	const query = `query($login: String!, $from: DateTime!, $to: DateTime!) {
+  user(login: $login) {
+    contributionsCollection(from: $from, to: $to) {
+      totalCommitContributions
+      restrictedContributionsCount
+    }
+  }
+}`
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"query": query,
+		"variables": map[string]string{
+			"login": handle,
+			"from":  startIST.Format(time.RFC3339),
+			"to":    endIST.Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		return contributionSummary{}, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, g.apiBase+"/graphql", bytes.NewReader(payload))
+	if err != nil {
+		return contributionSummary{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+g.token)
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return contributionSummary{}, fmt.Errorf("github graphql request failed: %w", err)
+	}
+	body, readErr := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if readErr != nil {
+		return contributionSummary{}, fmt.Errorf("failed to read github graphql response: %w", readErr)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return contributionSummary{}, fmt.Errorf("github graphql failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Data struct {
+			User *struct {
+				ContributionsCollection struct {
+					TotalCommitContributions     int `json:"totalCommitContributions"`
+					RestrictedContributionsCount int `json:"restrictedContributionsCount"`
+				} `json:"contributionsCollection"`
+			} `json:"user"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return contributionSummary{}, fmt.Errorf("failed to decode github graphql response: %w", err)
+	}
+	if len(result.Errors) > 0 {
+		messages := make([]string, 0, len(result.Errors))
+		for _, e := range result.Errors {
+			messages = append(messages, e.Message)
+		}
+		return contributionSummary{}, fmt.Errorf("github graphql errors: %s", strings.Join(messages, "; "))
+	}
+	if result.Data.User == nil {
+		return contributionSummary{}, fmt.Errorf("github graphql returned no user for handle %q", handle)
+	}
+
+	summary := contributionSummary{
+		TotalCommitContributions:     result.Data.User.ContributionsCollection.TotalCommitContributions,
+		RestrictedContributionsCount: result.Data.User.ContributionsCollection.RestrictedContributionsCount,
+	}
+	log.Printf("github contribution summary handle=%s date=%s commits=%d restricted=%d",
+		handle,
+		startIST.Format("2006-01-02"),
+		summary.TotalCommitContributions,
+		summary.RestrictedContributionsCount,
+	)
+
+	return summary, nil
+}
+
+// mergeHiddenContributions appends one extra activity when GitHub credits the
+// user with more commits than the token could see. The extra activity carries
+// only a count: no repository name and no messages. It never subtracts when the
+// visible total is higher (for example commits in forks, which GitHub does not
+// count as contributions).
+func mergeHiddenContributions(visible []ActivityData, summary contributionSummary, date time.Time, handle string) []ActivityData {
+	visibleTotal := 0
+	for _, activity := range visible {
+		if count, ok := activity.Metadata["commit_count"].(int); ok {
+			visibleTotal += count
+		}
+	}
+
+	expected := summary.TotalCommitContributions + summary.RestrictedContributionsCount
+	hidden := expected - visibleTotal
+	if hidden <= 0 {
+		return visible
+	}
+
+	log.Printf("github hidden contributions handle=%s date=%s visible=%d expected=%d hidden=%d",
+		handle,
+		date.Format("2006-01-02"),
+		visibleTotal,
+		expected,
+		hidden,
+	)
+
+	return append(visible, ActivityData{
+		Platform:     "github",
+		Date:         date,
+		ActivityType: "push",
+		Metadata: map[string]interface{}{
+			"repo":         "",
+			"label":        privateOrgLabel,
+			"private_org":  true,
+			"commit_count": hidden,
+			"messages":     []string{},
+		},
+	})
 }
 
 func (g *GitHubCollector) fetchDailyActivityByCommitSearch(handle string, date time.Time) ([]ActivityData, error) {
