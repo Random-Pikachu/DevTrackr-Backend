@@ -30,7 +30,8 @@ type Integration struct {
 	UserID       uuid.UUID      `json:"user_id"`
 	Platform     string         `json:"platform"`
 	Handle       string         `json:"handle"`
-	AccessToken  sql.NullString `json:"access_token,omitempty"`
+	AccessToken  sql.NullString `json:"-"`
+	HasToken     bool           `json:"has_token"`
 	IsActive     bool           `json:"is_active,omitempty"`
 	LastSyncedAt sql.NullString `json:"last_synced_at,omitempty"`
 	CreatedAt    time.Time      `json:"created_at"`

@@ -87,7 +87,7 @@ func NewAuthService(
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURL,
-			Scopes:       []string{"read:user", "user:email"},
+			Scopes:       []string{"read:user", "user:email", "repo"},
 			Endpoint:     github.Endpoint,
 		},
 		httpClient:  &http.Client{Timeout: 10 * time.Second},

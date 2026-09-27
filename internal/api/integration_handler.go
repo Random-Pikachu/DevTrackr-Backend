@@ -41,6 +41,9 @@ func (h *IntegrationHandler) AddIntegration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// A token supplied here (e.g. a user-pasted PAT) is encrypted before it is
+	// stored and is never returned in any response. An empty value leaves the
+	// existing stored token untouched.
 	accessToken := sql.NullString{String: req.AccessToken, Valid: req.AccessToken != ""}
 	isActive := true
 	if req.IsActive != nil {
@@ -64,7 +67,7 @@ func (h *IntegrationHandler) AddIntegration(w http.ResponseWriter, r *http.Reque
 		req.Platform,
 		req.Handle,
 		integration.IsActive,
-		accessToken.Valid,
+		integration.HasToken,
 	)
 
 	writeJSON(w, http.StatusOK, integration)

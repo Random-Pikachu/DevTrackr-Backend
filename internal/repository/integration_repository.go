@@ -3,20 +3,63 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/models"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/secrets"
 )
 
+// IntegrationRepository persists integrations. Access tokens are encrypted
+// before they reach the database and decrypted on read, so callers only ever
+// see plaintext in memory.
 type IntegrationRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	cipher *secrets.TokenCipher
 }
 
-func NewIntegrationRepository(db *sql.DB) *IntegrationRepository {
-	return &IntegrationRepository{db: db}
+func NewIntegrationRepository(db *sql.DB, cipher *secrets.TokenCipher) *IntegrationRepository {
+	return &IntegrationRepository{db: db, cipher: cipher}
+}
+
+func (r *IntegrationRepository) sealToken(token sql.NullString) (sql.NullString, error) {
+	if !token.Valid || token.String == "" {
+		return sql.NullString{}, nil
+	}
+	if r.cipher == nil {
+		return sql.NullString{}, errors.New("integration token cipher is not configured")
+	}
+	encrypted, err := r.cipher.Encrypt(token.String)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: encrypted, Valid: true}, nil
+}
+
+func (r *IntegrationRepository) openToken(stored sql.NullString) (sql.NullString, error) {
+	if !stored.Valid || stored.String == "" {
+		return sql.NullString{}, nil
+	}
+	if r.cipher == nil {
+		if secrets.IsEncrypted(stored.String) {
+			return sql.NullString{}, errors.New("integration token cipher is not configured")
+		}
+		return stored, nil
+	}
+	plaintext, err := r.cipher.Decrypt(stored.String)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: plaintext, Valid: plaintext != ""}, nil
 }
 
 func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration models.Integration) (models.Integration, error) {
+	storedToken, err := r.sealToken(integration.AccessToken)
+	if err != nil {
+		return models.Integration{}, err
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Integration{}, err
@@ -35,7 +78,7 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 		integration.UserID,
 		integration.Platform,
 		integration.Handle,
-		integration.AccessToken,
+		storedToken,
 		integration.IsActive,
 	).Scan(
 		&integration.ID,
@@ -53,10 +96,19 @@ func (r *IntegrationRepository) AddIntegration(ctx context.Context, integration 
 		return models.Integration{}, err
 	}
 
+	integration.HasToken = storedToken.Valid
 	return integration, nil
 }
 
+// UpsertIntegration inserts or updates an integration. When the incoming
+// AccessToken is empty the existing stored token is preserved, so re-saving a
+// handle never wipes an OAuth token. A non-empty token always replaces the old one.
 func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integration models.Integration) (models.Integration, error) {
+	storedToken, err := r.sealToken(integration.AccessToken)
+	if err != nil {
+		return models.Integration{}, err
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.Integration{}, err
@@ -69,10 +121,10 @@ func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integrati
 		ON CONFLICT (user_id, platform)
 		DO UPDATE SET
 			handle = EXCLUDED.handle,
-			access_token = EXCLUDED.access_token,
+			access_token = COALESCE(EXCLUDED.access_token, integrations.access_token),
 			is_active = EXCLUDED.is_active,
 			last_synced_at = NULL
-		RETURNING id, created_at, last_synced_at
+		RETURNING id, created_at, last_synced_at, (access_token IS NOT NULL)
 	`
 
 	err = tx.QueryRowContext(
@@ -81,12 +133,13 @@ func (r *IntegrationRepository) UpsertIntegration(ctx context.Context, integrati
 		integration.UserID,
 		integration.Platform,
 		integration.Handle,
-		integration.AccessToken,
+		storedToken,
 		integration.IsActive,
 	).Scan(
 		&integration.ID,
 		&integration.CreatedAt,
 		&integration.LastSyncedAt,
+		&integration.HasToken,
 	)
 	if err != nil {
 		return models.Integration{}, err
@@ -121,13 +174,14 @@ func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userI
 
 	for rows.Next() {
 		var integration models.Integration
+		var storedToken sql.NullString
 
 		err := rows.Scan(
 			&integration.ID,
 			&integration.UserID,
 			&integration.Platform,
 			&integration.Handle,
-			&integration.AccessToken,
+			&storedToken,
 			&integration.IsActive,
 			&integration.LastSyncedAt,
 			&integration.CreatedAt,
@@ -136,7 +190,17 @@ func (r *IntegrationRepository) GetActiveIntegrations(ctx context.Context, userI
 			return nil, err
 		}
 
+		integration.AccessToken, err = r.openToken(storedToken)
+		if err != nil {
+			return nil, fmt.Errorf("integration %s: %w", integration.ID, err)
+		}
+		integration.HasToken = integration.AccessToken.Valid
+
 		integrations = append(integrations, integration)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return integrations, nil
@@ -171,6 +235,56 @@ func (r *IntegrationRepository) DeactivateIntegration(ctx context.Context, integ
 	}
 
 	return nil
+}
+
+// ReencryptLegacyTokens encrypts every access token that is still stored as
+// plaintext. It returns the number of rows updated.
+func (r *IntegrationRepository) ReencryptLegacyTokens(ctx context.Context) (int, error) {
+	if r.cipher == nil {
+		return 0, errors.New("integration token cipher is not configured")
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id::text, access_token
+		FROM integrations
+		WHERE access_token IS NOT NULL AND access_token <> '' AND access_token NOT LIKE 'v1:%'
+	`)
+	if err != nil {
+		return 0, err
+	}
+
+	type legacyRow struct {
+		id    string
+		token string
+	}
+	var legacy []legacyRow
+	for rows.Next() {
+		var row legacyRow
+		if err := rows.Scan(&row.id, &row.token); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		legacy = append(legacy, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	updated := 0
+	for _, row := range legacy {
+		encrypted, err := r.cipher.Encrypt(row.token)
+		if err != nil {
+			return updated, err
+		}
+		if _, err := r.db.ExecContext(ctx, `UPDATE integrations SET access_token = $1 WHERE id = $2`, encrypted, row.id); err != nil {
+			return updated, fmt.Errorf("integration %s: %w", row.id, err)
+		}
+		updated++
+	}
+
+	return updated, nil
 }
 
 func syncUserIntegrationHandleTx(ctx context.Context, tx *sql.Tx, userID, platform, handle string, isActive bool) error {

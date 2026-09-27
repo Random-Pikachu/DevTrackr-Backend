@@ -11,6 +11,7 @@ import (
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/collectors"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/config"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/secrets"
 	_ "github.com/lib/pq"
 )
 
@@ -38,6 +39,11 @@ func main() {
 
 	if err := config.LoadLocalEnv(".env", "backend/.env"); err != nil {
 		log.Fatalf("failed to load env: %v", err)
+	}
+
+	tokenCipher, err := secrets.NewTokenCipherFromEnv()
+	if err != nil {
+		log.Fatalf("integration token encryption is not configured: %v", err)
 	}
 
 	dsn := fmt.Sprintf(
@@ -99,7 +105,11 @@ func main() {
 	for _, integration := range integrations {
 		token := ""
 		if integration.AccessToken.Valid {
-			token = integration.AccessToken.String
+			decrypted, err := tokenCipher.Decrypt(integration.AccessToken.String)
+			if err != nil {
+				log.Fatalf("failed to decrypt %s token: %v", integration.Platform, err)
+			}
+			token = decrypted
 		}
 
 		fmt.Printf("\nplatform=%s handle=%s active=%t token=%t\n",

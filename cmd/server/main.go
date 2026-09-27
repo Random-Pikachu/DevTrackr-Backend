@@ -17,6 +17,7 @@ import (
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/config"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/database"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/secrets"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/services"
 )
 
@@ -25,11 +26,16 @@ func main() {
 		log.Fatalf("failed to load local env: %v", err)
 	}
 
+	tokenCipher, err := secrets.NewTokenCipherFromEnv()
+	if err != nil {
+		log.Fatalf("integration token encryption is not configured: %v (generate one with `go run ./cmd/migrate -generate-token-key`)", err)
+	}
+
 	database.InitDB()
 	db := database.DB
 
 	userRepo := repository.NewUserRepository(db)
-	integrationRepo := repository.NewIntegrationRepository(db)
+	integrationRepo := repository.NewIntegrationRepository(db, tokenCipher)
 	activityRepo := repository.NewActivityRepository(db)
 	metricRepo := repository.NewMetricRepository(db)
 	emailRepo := repository.NewEmailRepository(db)

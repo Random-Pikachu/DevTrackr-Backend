@@ -1,14 +1,32 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/config"
 	"github.com/Random-Pikachu/DevTrackr-Backend/internal/database"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/repository"
+	"github.com/Random-Pikachu/DevTrackr-Backend/internal/secrets"
 )
 
 func main() {
+	generateKey := flag.Bool("generate-token-key", false, "print a new INTEGRATION_TOKEN_KEY and exit")
+	reencrypt := flag.Bool("reencrypt-tokens", false, "encrypt any integration access tokens still stored as plaintext")
+	flag.Parse()
+
+	if *generateKey {
+		key, err := secrets.GenerateKey()
+		if err != nil {
+			log.Fatalf("failed to generate key: %v", err)
+		}
+		fmt.Printf("%s=%s\n", secrets.TokenKeyEnv, key)
+		return
+	}
+
 	if err := config.LoadLocalEnv(".env", "backend/.env"); err != nil {
 		log.Fatalf("failed to load local env: %v", err)
 	}
@@ -58,12 +76,15 @@ func main() {
 		user_id UUID REFERENCES users(id) ON DELETE CASCADE,
 		platform VARCHAR(50) NOT NULL,
 		handle VARCHAR(255) NOT NULL,
-		access_token VARCHAR(255),
+		access_token TEXT,
 		is_active BOOLEAN DEFAULT TRUE,
 		last_synced_at TIMESTAMP WITH TIME ZONE,
 		created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(user_id, platform)
 	);
+
+	ALTER TABLE integrations
+	ALTER COLUMN access_token TYPE TEXT;
 
 	CREATE TABLE IF NOT EXISTS activities (
 		id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -133,4 +154,18 @@ func main() {
 	}
 
 	fmt.Println("All tables created successfully!")
+
+	if *reencrypt {
+		cipher, err := secrets.NewTokenCipherFromEnv()
+		if err != nil {
+			log.Fatalf("cannot re-encrypt tokens: %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		updated, err := repository.NewIntegrationRepository(db, cipher).ReencryptLegacyTokens(ctx)
+		if err != nil {
+			log.Fatalf("re-encrypting tokens failed after %d rows: %v", updated, err)
+		}
+		fmt.Printf("Re-encrypted %d legacy access token(s).\n", updated)
+	}
 }
